@@ -28,6 +28,7 @@ from dochat.ui.compose_bar import ComposeBar
 from dochat.ui.conversation_list import ConversationList
 from dochat.ui.discover_dialog import DiscoverDialog
 from dochat.ui.file_room import FileRoomDialog
+from dochat.ui.manage_group_dialog import ManageGroupDialog
 from dochat.ui.new_group_dialog import NewGroupDialog
 from dochat.ui.settings_dialog import SettingsDialog
 
@@ -175,6 +176,7 @@ class MainWindow(QMainWindow):
         self.conversation_list.edit_contact_requested.connect(self._on_edit_contact_requested)
         self.conversation_list.delete_contact_requested.connect(self._on_delete_contact_requested)
         self.conversation_list.delete_group_requested.connect(self._on_delete_group_requested)
+        self.conversation_list.manage_group_requested.connect(self._on_manage_group_requested)
 
         self.compose_bar.text_submitted.connect(self._on_text_submitted)
         self.compose_bar.file_selected.connect(self._on_file_to_send)
@@ -347,6 +349,17 @@ class MainWindow(QMainWindow):
             and self._current_conversation_id == group_id
         ):
             self._clear_current_conversation()
+        self._refresh_lists()
+
+    def _on_manage_group_requested(self, group_id: str) -> None:
+        group = None
+        for g in self.chat_engine.get_groups():
+            if g.id == group_id:
+                group = g
+                break
+        if group is None:
+            return
+        ManageGroupDialog.manage(self, self.chat_engine, group)
         self._refresh_lists()
 
     # ------------------------------------------------------------------

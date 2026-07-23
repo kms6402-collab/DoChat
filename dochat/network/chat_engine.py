@@ -179,6 +179,90 @@ class ChatEngine(QObject):
 
         return group
 
+    def _build_members_payload(self, member_ids: list[str]) -> list[dict]:
+        """member_ids에 대응하는 {"id","nickname","ip","port"} 목록을 만든다.
+
+        create_group()의 members_payload 구성 방식과 동일하게, 목록에 나 자신이
+        포함된 경우 내가 직접 설정한 닉네임/주소를 실어 보낸다.
+        """
+        members_payload = []
+        for mid in member_ids:
+            if mid == self.client_id:
+                my_ip, my_port = self.my_local_address
+                members_payload.append(
+                    {"id": self.client_id, "nickname": self.my_nickname, "ip": my_ip, "port": my_port}
+                )
+                continue
+            contact = self.peer_manager.get_contact(mid)
+            if contact:
+                members_payload.append(
+                    {"id": contact.id, "nickname": contact.nickname, "ip": contact.ip, "port": contact.port}
+                )
+        return members_payload
+
+    def add_group_members(self, group_id: str, contact_ids: list[str]) -> None:
+        """그룹에 새 멤버들을 추가하고, 갱신된 전체 멤버 목록을 모든 멤버에게 전파한다."""
+        group = self._groups.get(group_id)
+        if group is None:
+            return
+
+        group.member_ids = list(dict.fromkeys(group.member_ids + contact_ids))
+        self.storage.add_group(group)
+
+        members_payload = self._build_members_payload(group.member_ids)
+
+        # 갱신 후 멤버 전원(나 자신 제외)에게 알린다. (새로 추가된 멤버 포함)
+        targets_ids = [mid for mid in group.member_ids if mid != self.client_id]
+        for mid in targets_ids:
+            contact = self.peer_manager.get_contact(mid)
+            if not contact:
+                continue
+            packet = Packet(
+                msg_type=MsgType.GROUP_MEMBER_UPDATE,
+                seq=0,
+                sender_id=self.client_id,
+                payload={
+                    "group_id": group.id,
+                    "name": group.name,
+                    "action": "add",
+                    "members": members_payload,
+                },
+            )
+            self.socket.send_reliable(packet, contact.address)
+
+    def remove_group_member(self, group_id: str, contact_id: str) -> None:
+        """그룹에서 멤버 한 명을 제거하고, 갱신된 전체 멤버 목록을 이전 멤버 전원에게 전파한다."""
+        group = self._groups.get(group_id)
+        if group is None:
+            return
+
+        previous_members = list(group.member_ids)
+        if contact_id in group.member_ids:
+            group.member_ids.remove(contact_id)
+        self.storage.add_group(group)
+
+        members_payload = self._build_members_payload(group.member_ids)
+
+        # 제거된 사람도 "빠졌다"는 사실을 알아야 하므로, 이전 멤버 전원(나 자신 제외)에게 알린다.
+        for mid in previous_members:
+            if mid == self.client_id:
+                continue
+            contact = self.peer_manager.get_contact(mid)
+            if not contact:
+                continue
+            packet = Packet(
+                msg_type=MsgType.GROUP_MEMBER_UPDATE,
+                seq=0,
+                sender_id=self.client_id,
+                payload={
+                    "group_id": group.id,
+                    "name": group.name,
+                    "action": "remove",
+                    "members": members_payload,
+                },
+            )
+            self.socket.send_reliable(packet, contact.address)
+
     def get_groups(self) -> list[Group]:
         return list(self._groups.values())
 
@@ -384,6 +468,7 @@ class ChatEngine(QObject):
             MsgType.TEXT: self._handle_text,
             MsgType.PRESENCE: self._handle_presence,
             MsgType.GROUP_INVITE: self._handle_group_invite,
+            MsgType.GROUP_MEMBER_UPDATE: self._handle_group_member_update,
             MsgType.FILE_META: self._handle_file_meta,
             MsgType.FILE_CHUNK: self._handle_file_chunk,
         }.get(packet.msg_type)
@@ -445,6 +530,59 @@ class ChatEngine(QObject):
             if (ip, port) in self._local_addrs:
                 # 초대장 발신자 기준 멤버 목록에 포함된 "나 자신" 항목이므로
                 # 스스로를 연락처/그룹 멤버로 등록하지 않는다.
+                continue
+            local_id = self._resolve_contact(remote_id, ip, port, nickname=nickname)
+            if local_id not in member_ids:
+                member_ids.append(local_id)
+
+        group = Group(id=group_id, name=name, member_ids=member_ids)
+        self.storage.add_group(group)
+        self._groups[group.id] = group
+        self.group_updated.emit(group.id)
+
+    def _handle_group_member_update(self, packet: Packet, addr: tuple[str, int]) -> None:
+        """다른 멤버가 전파한 멤버 추가/삭제(GROUP_MEMBER_UPDATE)를 반영한다.
+
+        _handle_group_invite()와 거의 동일한 방식으로 payload의 members를 로컬
+        연락처로 변환한다. 다만 이번 members는 "갱신 후 전체 멤버 목록"이므로,
+        그 안에 내 자신의 항목이 존재하는지 여부로 "내가 여전히 멤버인지"를
+        판단한다 (없으면 그룹에서 제거된 것).
+        """
+        payload = packet.payload
+        group_id = payload.get("group_id")
+        name = payload.get("name", "")
+        members_info = payload.get("members", [])
+        if not group_id:
+            return
+
+        i_am_member = any(
+            info.get("ip") is not None
+            and info.get("port") is not None
+            and (info.get("ip"), info.get("port")) in self._local_addrs
+            for info in members_info
+        )
+
+        if not i_am_member:
+            # 갱신된 멤버 목록에 내가 없다 = 내가 그룹에서 제거됨.
+            self._groups.pop(group_id, None)
+            self.storage.remove_group(group_id)
+            self.group_updated.emit(group_id)
+            return
+
+        member_ids: list[str] = []
+
+        # 이 갱신을 보낸 사람(그룹 내 누구든 가능)을 연락처로 확보
+        sender_id = self._resolve_contact(packet.sender_id, addr[0], addr[1])
+        member_ids.append(sender_id)
+
+        for info in members_info:
+            remote_id = info.get("id")
+            ip, port = info.get("ip"), info.get("port")
+            nickname = info.get("nickname")
+            if remote_id is None or ip is None or port is None:
+                continue
+            if (ip, port) in self._local_addrs:
+                # 나 자신을 가리키는 항목이므로 연락처/멤버로 등록하지 않는다.
                 continue
             local_id = self._resolve_contact(remote_id, ip, port, nickname=nickname)
             if local_id not in member_ids:
