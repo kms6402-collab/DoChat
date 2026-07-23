@@ -8,3 +8,4 @@ dist/
 packaging/macos/DoChat.pkg
 .DS_Store
 dist_windows/
+.claude/
