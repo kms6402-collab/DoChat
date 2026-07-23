@@ -125,6 +125,12 @@ class SettingsDialog(QDialog):
         self._notify_check.setChecked(notify_default)
         form.addRow("", self._notify_check)
 
+        # --- 트레이 알림 -----------------------------------------------
+        self._notify_popup_check = QCheckBox("트레이 알림 표시 (창이 숨겨져 있을 때 새 메시지를 풍선 알림으로 표시)")
+        notify_popup_default = storage.get_setting("notify_popup", "1") == "1"
+        self._notify_popup_check.setChecked(notify_popup_default)
+        form.addRow("", self._notify_popup_check)
+
         # --- 버전 정보 / 업데이트 -----------------------------------------
         version_row = QHBoxLayout()
         version_label = QLabel(f"버전: {config.get_version_string()}")
@@ -230,5 +236,6 @@ class SettingsDialog(QDialog):
         self._storage.set_setting("listen_port", str(self._port_spin.value()))
         self._storage.set_setting("notify_sound", "1" if self._notify_check.isChecked() else "0")
         self._storage.set_setting("network_key", self._network_key_edit.text())
+        self._storage.set_setting("notify_popup", "1" if self._notify_popup_check.isChecked() else "0")
 
         self.accept()
