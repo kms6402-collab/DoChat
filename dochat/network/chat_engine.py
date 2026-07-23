@@ -16,6 +16,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from dochat.config import (
     CLIENT_ID,
     DEFAULT_LISTEN_PORT,
+    DEFAULT_NETWORK_KEY,
     FILE_CHUNK_SIZE,
     PRESENCE_INTERVAL_SEC,
 )
@@ -65,7 +66,11 @@ class ChatEngine(QObject):
         self._incoming: dict[str, IncomingFileTransfer] = {}      # file_id -> transfer
         self._incoming_conv_type: dict[str, str] = {}             # file_id -> conversation_type
 
-        self.socket = ReliableUDPSocket(client_id=self._client_id, parent=self)
+        self.socket = ReliableUDPSocket(
+            client_id=self._client_id,
+            parent=self,
+            key=storage.get_setting("network_key") or DEFAULT_NETWORK_KEY,
+        )
         self.socket.on_packet_received = self._on_packet_received
         if not self.socket.bind(listen_port):
             raise RuntimeError(f"UDP 포트 {listen_port} 바인딩에 실패했습니다.")

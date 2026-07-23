@@ -51,3 +51,6 @@ FILE_CHUNK_SIZE = 1200
 # 프레즌스(온라인 상태) 하트비트 주기
 PRESENCE_INTERVAL_SEC = 5.0
 PRESENCE_TIMEOUT_SEC = 15.0
+
+# UDP 페이로드 암호화에 사용하는 기본 공유 비밀키(설정에서 별도로 지정하지 않은 경우 사용)
+DEFAULT_NETWORK_KEY = "dochat-office-default-key-2026"
