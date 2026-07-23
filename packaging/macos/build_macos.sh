@@ -13,11 +13,12 @@ pip install --upgrade pip -q
 pip install -r requirements.txt -q
 pip install pyinstaller -q
 
-rm -rf build dist DoChat.spec
-python -m PyInstaller --windowed --name DoChat --icon assets/icon.icns --add-data "assets:assets" --noconfirm main.py
+rm -rf build_v2 dist_v2 DoChat.spec
+python -m PyInstaller --windowed --name DoChat --icon assets/icon.icns --add-data "assets:assets" \
+    --distpath dist_v2 --workpath build_v2 --noconfirm main.py
 
 mkdir -p packaging/macos
-pkgbuild --component dist/DoChat.app \
+pkgbuild --component dist_v2/DoChat.app \
     --install-location /Applications \
     --identifier com.dochat.app \
     --version 1.0.0 \
@@ -26,6 +27,6 @@ pkgbuild --component dist/DoChat.app \
 echo ""
 echo "=============================================="
 echo "빌드 완료"
-echo "  앱 번들:   dist/DoChat.app"
+echo "  앱 번들:   dist_v2/DoChat.app"
 echo "  설치 패키지: packaging/macos/DoChat.pkg"
 echo "=============================================="
