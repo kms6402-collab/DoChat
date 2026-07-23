@@ -5,6 +5,8 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -25,6 +27,7 @@ from dochat.ui.compose_bar import ComposeBar
 from dochat.ui.conversation_list import ConversationList
 from dochat.ui.file_room import FileRoomDialog
 from dochat.ui.new_group_dialog import NewGroupDialog
+from dochat.ui.settings_dialog import SettingsDialog
 
 _STYLE_PATH = Path(__file__).resolve().parent / "styles.qss"
 
@@ -36,7 +39,19 @@ class MainWindow(QMainWindow):
         self.resize(1000, 700)
 
         self.storage = Storage(config.DB_PATH)
-        self.chat_engine = ChatEngine(self.storage, listen_port=config.DEFAULT_LISTEN_PORT)
+
+        # 저장된 환경설정(파일 저장 폴더 / 리스닝 포트)이 있으면 엔진 생성 전에 반영한다.
+        saved_folder = self.storage.get_setting("save_folder")
+        if saved_folder:
+            config.RECEIVED_FILES_DIR = Path(saved_folder)
+            config.RECEIVED_FILES_DIR.mkdir(parents=True, exist_ok=True)
+
+        saved_port = self.storage.get_setting("listen_port")
+        listen_port = int(saved_port) if saved_port else config.DEFAULT_LISTEN_PORT
+
+        self.chat_engine = ChatEngine(self.storage, listen_port=listen_port)
+
+        self._notify_sound = self.storage.get_setting("notify_sound", "1") == "1"
 
         self._current_conversation_id: str | None = None
         self._current_conversation_type: str | None = None
@@ -88,6 +103,10 @@ class MainWindow(QMainWindow):
         self._file_room_button.setObjectName("SidebarActionButton")
         header_layout.addWidget(self._file_room_button)
 
+        self._settings_button = QPushButton("⚙ 설정")
+        self._settings_button.setObjectName("SidebarActionButton")
+        header_layout.addWidget(self._settings_button)
+
         sidebar_layout.addWidget(header)
 
         self.conversation_list = ConversationList()
@@ -136,6 +155,7 @@ class MainWindow(QMainWindow):
         self._new_contact_button.clicked.connect(self._on_new_contact_clicked)
         self._new_group_button.clicked.connect(self._on_new_group_clicked)
         self._file_room_button.clicked.connect(self._on_file_room_clicked)
+        self._settings_button.clicked.connect(self._on_settings_clicked)
 
         self.conversation_list.conversation_selected.connect(self._on_conversation_selected)
 
@@ -214,6 +234,12 @@ class MainWindow(QMainWindow):
     def _on_file_room_closed(self) -> None:
         self._file_room = None
 
+    def _on_settings_clicked(self) -> None:
+        dialog = SettingsDialog(self.chat_engine, self.storage, parent=self)
+        if dialog.exec() == QDialog.Accepted:
+            self._notify_sound = self.storage.get_setting("notify_sound", "1") == "1"
+            self._update_header()
+
     def _on_conversation_selected(self, conversation_id: str, conversation_type: str) -> None:
         self._current_conversation_id = conversation_id
         self._current_conversation_type = conversation_type
@@ -247,6 +273,8 @@ class MainWindow(QMainWindow):
     # ChatEngine 시그널 핸들러
     # ------------------------------------------------------------------
     def _on_message_received(self, message) -> None:
+        if self._notify_sound:
+            QApplication.beep()
         if (
             self._current_conversation_id == message.conversation_id
             and self._current_conversation_type == message.conversation_type
@@ -266,6 +294,9 @@ class MainWindow(QMainWindow):
     def _on_file_completed(self, file_id: str, success: bool) -> None:
         record = self.storage.get_file_record(file_id)
         conversation_id = record.conversation_id if record else None
+
+        if self._notify_sound and success and record is not None and record.direction == "in":
+            QApplication.beep()
 
         if conversation_id is not None and conversation_id == self._current_conversation_id:
             # 완료 시점에 실제 Message가 storage에 저장되므로 현재 대화를 다시 로드해

@@ -11,7 +11,8 @@ import shutil
 import uuid
 from pathlib import Path
 
-from dochat.config import FILE_CHUNK_SIZE, RECEIVED_FILES_DIR
+import dochat.config as config
+from dochat.config import FILE_CHUNK_SIZE
 
 
 class OutgoingFileTransfer:
@@ -76,8 +77,8 @@ class IncomingFileTransfer:
         self.received_chunks = 0
         self._received_indices: set[int] = set()
 
-        RECEIVED_FILES_DIR.mkdir(parents=True, exist_ok=True)
-        self.tmp_path = RECEIVED_FILES_DIR / f"{file_id}.part"
+        config.RECEIVED_FILES_DIR.mkdir(parents=True, exist_ok=True)
+        self.tmp_path = config.RECEIVED_FILES_DIR / f"{file_id}.part"
         with open(self.tmp_path, "wb") as f:
             if size > 0:
                 f.truncate(size)
@@ -102,7 +103,7 @@ class IncomingFileTransfer:
 
     def finalize(self) -> str:
         """완료된 임시 파일을 RECEIVED_FILES_DIR의 최종 파일명으로 옮기고 경로를 반환한다."""
-        final_path = _unique_path(RECEIVED_FILES_DIR / self.filename)
+        final_path = _unique_path(config.RECEIVED_FILES_DIR / self.filename)
         shutil.move(str(self.tmp_path), str(final_path))
         return str(final_path)
 
