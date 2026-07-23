@@ -109,6 +109,7 @@ class ConversationList(QWidget):
     edit_contact_requested = Signal(str)      # contact_id
     delete_contact_requested = Signal(str)    # contact_id
     delete_group_requested = Signal(str)      # group_id
+    manage_group_requested = Signal(str)      # group_id
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -184,9 +185,12 @@ class ConversationList(QWidget):
             elif chosen is delete_action:
                 self.delete_contact_requested.emit(conversation_id)
         else:
+            manage_action = menu.addAction("멤버 관리")
             leave_action = menu.addAction("그룹 나가기(삭제)")
             chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
-            if chosen is leave_action:
+            if chosen is manage_action:
+                self.manage_group_requested.emit(conversation_id)
+            elif chosen is leave_action:
                 self.delete_group_requested.emit(conversation_id)
 
     def current_selection(self) -> tuple[str, str] | None:
