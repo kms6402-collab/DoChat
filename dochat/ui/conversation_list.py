@@ -90,6 +90,26 @@ class _ConversationRow(QWidget):
 
         layout.addLayout(text_col, 1)
 
+        # 안읽은 메시지 개수 배지 (0이면 숨김)
+        self.unread_badge = QLabel("")
+        self.unread_badge.setFixedSize(20, 20)
+        self.unread_badge.setAlignment(Qt.AlignCenter)
+        self.unread_badge.setStyleSheet(
+            "background-color: #E0433B; color: #FFFFFF; border-radius: 10px;"
+            "font-weight: 600; font-size: 10px;"
+        )
+        self.unread_badge.hide()
+        layout.addWidget(self.unread_badge)
+
+    def set_unread(self, count: int) -> None:
+        """안읽은 메시지 개수 배지를 갱신한다. count가 0이면 숨긴다."""
+        if count <= 0:
+            self.unread_badge.hide()
+            self.unread_badge.setText("")
+            return
+        self.unread_badge.setText(str(count) if count <= 99 else "99+")
+        self.unread_badge.show()
+
 
 def _format_preview(storage: Storage, conversation_id: str) -> str:
     last = storage.get_last_message(conversation_id)
@@ -220,3 +240,13 @@ class ConversationList(QWidget):
             preview = _format_preview(storage, conversation_id)
             fm = row.preview_label.fontMetrics()
             row.preview_label.setText(fm.elidedText(preview, Qt.ElideRight, 200))
+
+    def set_unread_count(self, conversation_id: str, conversation_type: str, count: int) -> None:
+        """특정 대화의 안읽은 메시지 배지를 갱신한다 (로컬 UI 전용 상태)."""
+        key = (conversation_id, conversation_type)
+        item = self._items.get(key)
+        if item is None:
+            return
+        row = self._list.itemWidget(item)
+        if isinstance(row, _ConversationRow):
+            row.set_unread(count)

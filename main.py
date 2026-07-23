@@ -24,6 +24,8 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("DoChat")
     app.setWindowIcon(QIcon(str(resource_path("assets/icon.png"))))
+    # 창을 닫아도(트레이로 최소화) 앱 프로세스가 종료되지 않도록 한다.
+    app.setQuitOnLastWindowClosed(False)
 
     window = MainWindow()
     window.show()

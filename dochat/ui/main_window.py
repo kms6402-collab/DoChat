@@ -1,9 +1,11 @@
 """DoChat 메인 윈도우: 좌측 대화 목록 + 우측 채팅 영역."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -11,8 +13,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
@@ -33,6 +37,17 @@ from dochat.ui.new_group_dialog import NewGroupDialog
 from dochat.ui.settings_dialog import SettingsDialog
 
 _STYLE_PATH = Path(__file__).resolve().parent / "styles.qss"
+
+
+def _tray_icon_path() -> Path:
+    """트레이 아이콘 파일의 절대 경로를 반환한다.
+
+    main.py의 resource_path()와 동일한 로직(PyInstaller 번들 시
+    sys._MEIPASS 기준, 개발 환경에서는 프로젝트 루트 기준)을
+    순환참조 없이 이 모듈에서 독립적으로 계산한다.
+    """
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent.parent))
+    return base / "assets" / "icon.png"
 
 
 class MainWindow(QMainWindow):
@@ -67,11 +82,51 @@ class MainWindow(QMainWindow):
         self._current_conversation_type: str | None = None
         self._file_room: FileRoomDialog | None = None
 
+        # 트레이 최소화 관련 상태
+        self._force_quit = False
+        self._tray_hint_shown = False
+
+        # 대화별 안읽은 메시지 개수 (conversation_id -> count, 로컬 UI 전용)
+        self._unread_counts: dict[str, int] = {}
+
         self._build_ui()
         self._connect_signals()
         self._apply_stylesheet()
 
         self._refresh_lists()
+
+        self._setup_tray_icon()
+
+    # ------------------------------------------------------------------
+    def _setup_tray_icon(self) -> None:
+        """시스템 트레이 아이콘과 메뉴(열기/종료)를 구성한다."""
+        self.tray_icon = QSystemTrayIcon(QIcon(str(_tray_icon_path())), self)
+        self.tray_icon.setToolTip(config.APP_NAME)
+
+        tray_menu = QMenu(self)
+        open_action = tray_menu.addAction("열기")
+        open_action.triggered.connect(self._on_tray_open_requested)
+        quit_action = tray_menu.addAction("종료")
+        quit_action.triggered.connect(self._on_tray_quit_requested)
+        self.tray_icon.setContextMenu(tray_menu)
+
+        self.tray_icon.activated.connect(self._on_tray_icon_activated)
+
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray_icon.show()
+
+    def _on_tray_open_requested(self) -> None:
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_tray_quit_requested(self) -> None:
+        self._force_quit = True
+        self.close()
+
+    def _on_tray_icon_activated(self, reason) -> None:
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self._on_tray_open_requested()
 
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
@@ -173,6 +228,7 @@ class MainWindow(QMainWindow):
         self._settings_button.clicked.connect(self._on_settings_clicked)
 
         self.conversation_list.conversation_selected.connect(self._on_conversation_selected)
+        self.conversation_list.conversation_selected.connect(self._on_conversation_selected_clear_badge)
         self.conversation_list.edit_contact_requested.connect(self._on_edit_contact_requested)
         self.conversation_list.delete_contact_requested.connect(self._on_delete_contact_requested)
         self.conversation_list.delete_group_requested.connect(self._on_delete_group_requested)
@@ -183,6 +239,7 @@ class MainWindow(QMainWindow):
         self.chat_view.file_dropped.connect(self._on_file_to_send)
 
         self.chat_engine.message_received.connect(self._on_message_received)
+        self.chat_engine.message_received.connect(self._on_message_received_for_badge)
         self.chat_engine.file_progress.connect(self._on_file_progress)
         self.chat_engine.file_completed.connect(self._on_file_completed)
         self.chat_engine.contact_status_changed.connect(self._on_contact_status_changed)
@@ -378,6 +435,30 @@ class MainWindow(QMainWindow):
             message.conversation_id, message.conversation_type, self.storage
         )
 
+    def _on_message_received_for_badge(self, message) -> None:
+        """현재 열려있지 않은 대화에 새 메시지가 오면 안읽은 배지를 갱신한다.
+
+        (로컬 UI 전용 상태 — 기존 _on_message_received와는 별도의 슬롯으로 동작한다.)
+        """
+        if (
+            self._current_conversation_id == message.conversation_id
+            and self._current_conversation_type == message.conversation_type
+        ):
+            return
+        self._unread_counts[message.conversation_id] = (
+            self._unread_counts.get(message.conversation_id, 0) + 1
+        )
+        self.conversation_list.set_unread_count(
+            message.conversation_id,
+            message.conversation_type,
+            self._unread_counts[message.conversation_id],
+        )
+
+    def _on_conversation_selected_clear_badge(self, conversation_id: str, conversation_type: str) -> None:
+        """대화를 선택하면 해당 대화의 안읽은 배지를 초기화한다."""
+        self._unread_counts[conversation_id] = 0
+        self.conversation_list.set_unread_count(conversation_id, conversation_type, 0)
+
     def _on_file_progress(self, file_id: str, done: int, total: int, direction: str) -> None:
         # message_received 없이도 진행 중인 파일을 보여주기 위해 필요하면 임시 버블을 생성한다.
         self.chat_view.ensure_file_bubble(file_id)
@@ -433,6 +514,19 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def closeEvent(self, event) -> None:
+        if not self._force_quit and QSystemTrayIcon.isSystemTrayAvailable():
+            event.ignore()
+            self.hide()
+            if not self._tray_hint_shown:
+                self.tray_icon.showMessage(
+                    "DoChat",
+                    "트레이에서 계속 실행됩니다.",
+                    QSystemTrayIcon.Information,
+                    3000,
+                )
+                self._tray_hint_shown = True
+            return
+
         try:
             self.storage.close()
         except Exception:
