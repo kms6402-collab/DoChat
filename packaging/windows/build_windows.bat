@@ -22,7 +22,7 @@ rmdir /s /q build 2>nul
 rmdir /s /q dist 2>nul
 del DoChat.spec 2>nul
 
-python -m PyInstaller --windowed --onefile --name DoChat --noconfirm main.py
+python -m PyInstaller --windowed --onefile --name DoChat --icon assets\icon.ico --add-data "assets;assets" --noconfirm main.py
 
 echo.
 echo ==============================================
