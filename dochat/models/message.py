@@ -31,6 +31,8 @@ class Message:
     timestamp: float
     text: str | None = None
     file_id: str | None = None
+    status: str = "sent"  # "sent" | "pending" | "failed"
+    read_at: float | None = None
 
 
 @dataclass

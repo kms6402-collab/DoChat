@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS messages (
     type TEXT NOT NULL,
     text TEXT,
     file_id TEXT,
-    timestamp REAL NOT NULL
+    timestamp REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'sent',
+    read_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conversation
     ON messages (conversation_id, timestamp);
@@ -64,6 +66,16 @@ class Storage:
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        self._conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """기존 DB(이전 버전에서 생성된)에 없는 컬럼을 보강한다."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(messages)").fetchall()}
+        if "status" not in cols:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN status TEXT NOT NULL DEFAULT 'sent'")
+        if "read_at" not in cols:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN read_at REAL")
         self._conn.commit()
 
     def close(self) -> None:
@@ -118,8 +130,8 @@ class Storage:
     def add_message(self, message: Message) -> None:
         self._conn.execute(
             """INSERT OR REPLACE INTO messages
-               (id, conversation_id, conversation_type, sender_id, type, text, file_id, timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, conversation_id, conversation_type, sender_id, type, text, file_id, timestamp, status, read_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 message.id,
                 message.conversation_id,
@@ -129,6 +141,8 @@ class Storage:
                 message.text,
                 message.file_id,
                 message.timestamp,
+                message.status,
+                message.read_at,
             ),
         )
         self._conn.commit()
@@ -148,9 +162,62 @@ class Storage:
                 text=r["text"],
                 file_id=r["file_id"],
                 timestamp=r["timestamp"],
+                status=r["status"] if r["status"] is not None else "sent",
+                read_at=r["read_at"],
             )
             for r in rows
         ]
+
+    def get_pending_messages_for_contact(self, contact_id: str) -> list[Message]:
+        """status='pending'이고 conversation_id가 해당 연락처(1:1 대화)인 메시지 목록."""
+        rows = self._conn.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? AND status = 'pending' ORDER BY timestamp ASC",
+            (contact_id,),
+        ).fetchall()
+        return [
+            Message(
+                id=r["id"],
+                conversation_id=r["conversation_id"],
+                conversation_type=r["conversation_type"],
+                sender_id=r["sender_id"],
+                type=r["type"],
+                text=r["text"],
+                file_id=r["file_id"],
+                timestamp=r["timestamp"],
+                status=r["status"] if r["status"] is not None else "sent",
+                read_at=r["read_at"],
+            )
+            for r in rows
+        ]
+
+    def get_all_pending_messages(self) -> list[Message]:
+        """status='pending'인 모든 메시지 (재시작 시 재전송 큐 복원용)."""
+        rows = self._conn.execute(
+            "SELECT * FROM messages WHERE status = 'pending' ORDER BY timestamp ASC",
+        ).fetchall()
+        return [
+            Message(
+                id=r["id"],
+                conversation_id=r["conversation_id"],
+                conversation_type=r["conversation_type"],
+                sender_id=r["sender_id"],
+                type=r["type"],
+                text=r["text"],
+                file_id=r["file_id"],
+                timestamp=r["timestamp"],
+                status=r["status"] if r["status"] is not None else "sent",
+                read_at=r["read_at"],
+            )
+            for r in rows
+        ]
+
+    def mark_message_status(self, message_id: str, status: str) -> None:
+        self._conn.execute("UPDATE messages SET status = ? WHERE id = ?", (status, message_id))
+        self._conn.commit()
+
+    def mark_message_read(self, message_id: str, read_at: float) -> None:
+        self._conn.execute("UPDATE messages SET read_at = ? WHERE id = ?", (read_at, message_id))
+        self._conn.commit()
 
     # --- settings (환경설정 key-value) ---------------------------------
     def get_setting(self, key: str, default: str | None = None) -> str | None:
@@ -182,6 +249,8 @@ class Storage:
             text=r["text"],
             file_id=r["file_id"],
             timestamp=r["timestamp"],
+            status=r["status"] if r["status"] is not None else "sent",
+            read_at=r["read_at"],
         )
 
     # --- files ---------------------------------------------------------

@@ -20,6 +20,7 @@ class MsgType:
     FILE_META = "FILE_META"
     FILE_CHUNK = "FILE_CHUNK"
     ACK = "ACK"
+    READ_RECEIPT = "READ_RECEIPT"
 
     # ACK가 필요 없는(응답을 기다리지 않는) 타입들
     NO_ACK_TYPES = frozenset({ACK, PRESENCE})

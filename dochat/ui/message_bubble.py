@@ -62,6 +62,7 @@ class MessageBubble(QWidget):
         self._is_mine = is_mine
         self._file_record = file_record
         self._progress_bar: QProgressBar | None = None
+        self._read_label: QLabel | None = None
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(12, 3, 12, 3)
@@ -86,11 +87,27 @@ class MessageBubble(QWidget):
         else:
             self._build_text_content(bubble_layout)
 
+        meta_row = QHBoxLayout()
+        meta_row.setContentsMargins(0, 0, 0, 0)
+        meta_row.setSpacing(4)
+        if is_mine:
+            meta_row.addStretch(1)
+
+        if is_mine and message.type == MessageType.TEXT:
+            self._read_label = QLabel("읽음")
+            self._read_label.setObjectName("BubbleReadStatus")
+            self._read_label.setStyleSheet("color: #C6CDD6; font-size: 10px; background: transparent;")
+            self._read_label.setVisible(bool(message.read_at))
+            meta_row.addWidget(self._read_label)
+
         meta_label = QLabel(self._format_time(message.timestamp))
         meta_label.setObjectName("BubbleMetaMine" if is_mine else "BubbleMeta")
-        bubble_layout.addWidget(
-            meta_label, 0, Qt.AlignRight if is_mine else Qt.AlignLeft
-        )
+        meta_row.addWidget(meta_label)
+
+        if not is_mine:
+            meta_row.addStretch(1)
+
+        bubble_layout.addLayout(meta_row)
 
         bubble_frame.setMaximumWidth(420)
         bubble_frame.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Minimum)
@@ -189,6 +206,16 @@ class MessageBubble(QWidget):
     @property
     def file_id(self) -> str | None:
         return self._message.file_id
+
+    @property
+    def message(self) -> Message:
+        return self._message
+
+    def update_read_status(self, read_at: float) -> None:
+        """상대가 이 메시지를 읽었음을 표시한다 (내가 보낸 텍스트 메시지에만 적용)."""
+        self._message.read_at = read_at
+        if self._read_label is not None:
+            self._read_label.setVisible(True)
 
     def update_progress(self, done: int, total: int) -> None:
         """파일 전송/수신 진행률 갱신 (0%~100%). 완료 시 바를 숨긴다."""
