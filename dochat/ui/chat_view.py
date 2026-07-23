@@ -113,6 +113,14 @@ class ChatView(QWidget):
         QTimer.singleShot(0, _do_scroll)
 
     # ------------------------------------------------------------------
+    def clear(self) -> None:
+        """선택된 대화가 없는 초기 상태로 되돌린다 (예: 대화 상대 삭제 시)."""
+        self.conversation_id = None
+        self.conversation_type = None
+        self._clear_bubbles()
+        self._empty_label.setText("대화를 선택해 주세요.")
+        self._empty_label.show()
+
     def set_conversation(self, conversation_id: str, conversation_type: str, my_id: str) -> None:
         """대화 전환: 기존 버블을 지우고 히스토리를 새로 로드한다."""
         self.conversation_id = conversation_id

@@ -78,6 +78,8 @@ class Storage:
 
     def remove_contact(self, contact_id: str) -> None:
         self._conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
+        # 삭제된 연락처가 그룹 멤버로 유령처럼 남지 않도록 함께 정리한다.
+        self._conn.execute("DELETE FROM group_members WHERE contact_id = ?", (contact_id,))
         self._conn.commit()
 
     # --- groups ---------------------------------------------------------
@@ -91,6 +93,11 @@ class Storage:
             "INSERT OR IGNORE INTO group_members (group_id, contact_id) VALUES (?, ?)",
             [(group.id, cid) for cid in group.member_ids],
         )
+        self._conn.commit()
+
+    def remove_group(self, group_id: str) -> None:
+        self._conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+        self._conn.execute("DELETE FROM group_members WHERE group_id = ?", (group_id,))
         self._conn.commit()
 
     def get_groups(self) -> list[Group]:
