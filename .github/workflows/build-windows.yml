@@ -13,6 +13,10 @@ jobs:
     steps:
       - name: 저장소 체크아웃
         uses: actions/checkout@v4
+        with:
+          # 빌드 번호(BUILD_NUMBER)를 `git rev-list --count HEAD`로 계산하므로
+          # shallow clone(기본 fetch-depth: 1)이 아닌 전체 히스토리가 필요하다.
+          fetch-depth: 0
 
       - name: Python 설치
         uses: actions/setup-python@v5
@@ -28,21 +32,26 @@ jobs:
       - name: 빌드 정보 생성 (버전에 커밋/날짜 반영)
         run: python scripts\generate_build_info.py
 
-      - name: PyInstaller로 exe 빌드
+      - name: PyInstaller로 폴더(onedir) 빌드
         run: |
-          pyinstaller --windowed --onefile --name DoChat --icon assets\icon.ico --add-data "assets;assets" main.py
+          pyinstaller --windowed --name DoChat --icon assets\icon.ico --add-data "assets;assets" main.py
+
+      - name: 빌드 결과 zip 압축
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\DoChat\* -DestinationPath dist\DoChat-windows.zip -Force
 
       - name: 빌드 아티팩트 업로드
         uses: actions/upload-artifact@v4
         with:
-          name: DoChat-windows-exe
-          path: dist/DoChat.exe
+          name: DoChat-windows
+          path: dist/DoChat-windows.zip
           if-no-files-found: error
 
       - name: GitHub Release에 첨부 (태그 푸시 시)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/DoChat.exe
+          files: dist/DoChat-windows.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
