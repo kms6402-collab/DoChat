@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 APP_NAME = "DoChat"
+APP_VERSION = "1.0.0"
 
 # 로컬 데이터/수신 파일 저장 위치
 APP_DIR = Path.home() / ".dochat"

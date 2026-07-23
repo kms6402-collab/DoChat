@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS files (
     conversation_id TEXT NOT NULL,
     direction TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -139,6 +144,20 @@ class Storage:
             )
             for r in rows
         ]
+
+    # --- settings (환경설정 key-value) ---------------------------------
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        r = self._conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        if r is None:
+            return default
+        return r["value"]
+
+    def set_setting(self, key: str, value: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+        self._conn.commit()
 
     def get_last_message(self, conversation_id: str) -> Message | None:
         r = self._conn.execute(

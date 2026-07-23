@@ -6,6 +6,7 @@ API를 제공한다.
 """
 from __future__ import annotations
 
+import os
 import socket as _socket
 import time
 import uuid
@@ -46,6 +47,10 @@ class ChatEngine(QObject):
         super().__init__(parent)
         self.storage = storage
         self._client_id = CLIENT_ID
+        self._listen_port = listen_port
+
+        # 내 닉네임(설정 화면에서 변경 가능). 저장된 값이 없으면 OS 사용자명을 기본값으로 쓴다.
+        self.my_nickname = storage.get_setting("my_nickname") or self._default_nickname()
 
         self.peer_manager = PeerManager(storage)
         self._groups: dict[str, Group] = {g.id: g for g in storage.get_groups()}
@@ -94,6 +99,23 @@ class ChatEngine(QObject):
     def client_id(self) -> str:
         return self._client_id
 
+    @property
+    def my_local_address(self) -> tuple[str, int]:
+        """이 노드의 (IP, 포트). 다른 사람이 '새 대화 추가'에 입력할 값이다."""
+        return (self._detect_local_ip(), self._listen_port)
+
+    def set_my_nickname(self, nickname: str) -> None:
+        """내 닉네임을 갱신하고 저장소에 영구 저장한다."""
+        self.my_nickname = nickname
+        self.storage.set_setting("my_nickname", nickname)
+
+    @staticmethod
+    def _default_nickname() -> str:
+        try:
+            return os.getlogin()
+        except OSError:
+            return "사용자"
+
     def add_contact(self, nickname: str, ip: str, port: int) -> Contact:
         return self.peer_manager.add_contact(nickname, ip, port)
 
@@ -110,6 +132,14 @@ class ChatEngine(QObject):
 
         members_payload = []
         for mid in group.member_ids:
+            if mid == self.client_id:
+                # 멤버 목록에 나 자신이 포함된 경우, 상대가 정확한 닉네임으로
+                # 나를 표시할 수 있도록 내가 직접 설정한 닉네임을 실어 보낸다.
+                my_ip, my_port = self.my_local_address
+                members_payload.append(
+                    {"id": self.client_id, "nickname": self.my_nickname, "ip": my_ip, "port": my_port}
+                )
+                continue
             contact = self.peer_manager.get_contact(mid)
             if contact:
                 members_payload.append(
@@ -302,7 +332,12 @@ class ChatEngine(QObject):
     # ------------------------------------------------------------------
     def _send_presence_heartbeat(self) -> None:
         for contact in self.peer_manager.all_contacts():
-            packet = Packet(msg_type=MsgType.PRESENCE, seq=0, sender_id=self.client_id, payload={})
+            packet = Packet(
+                msg_type=MsgType.PRESENCE,
+                seq=0,
+                sender_id=self.client_id,
+                payload={"nickname": self.my_nickname},
+            )
             self.socket.send_unreliable(packet, contact.address)
 
     def _check_presence_timeouts(self) -> None:
@@ -334,7 +369,8 @@ class ChatEngine(QObject):
             handler(packet, addr)
 
     def _handle_presence(self, packet: Packet, addr: tuple[str, int]) -> None:
-        contact_id = self._resolve_contact(packet.sender_id, addr[0], addr[1])
+        nickname = (packet.payload or {}).get("nickname")
+        contact_id = self._resolve_contact(packet.sender_id, addr[0], addr[1], nickname=nickname)
         self.peer_manager.mark_online(contact_id)
         self._update_online_state(contact_id)
 
