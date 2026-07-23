@@ -17,9 +17,10 @@ from dochat.config import DEFAULT_LISTEN_PORT
 class AddContactDialog(QDialog):
     """닉네임 / IP / 포트를 입력받는 간단한 다이얼로그."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None, initial: tuple[str, str, int] | None = None):
         super().__init__(parent)
-        self.setWindowTitle("새 대화 상대 추가")
+        is_edit = initial is not None
+        self.setWindowTitle("연락처 편집" if is_edit else "새 대화 상대 추가")
         self.setModal(True)
         self.setMinimumWidth(320)
 
@@ -39,9 +40,15 @@ class AddContactDialog(QDialog):
         self._port_spin.setValue(DEFAULT_LISTEN_PORT)
         form.addRow("포트", self._port_spin)
 
+        if initial is not None:
+            nickname, ip, port = initial
+            self._nickname_edit.setText(nickname)
+            self._ip_edit.setText(ip)
+            self._port_spin.setValue(port)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setObjectName("PrimaryButton")
-        buttons.button(QDialogButtonBox.Ok).setText("추가")
+        buttons.button(QDialogButtonBox.Ok).setText("저장" if is_edit else "추가")
         buttons.button(QDialogButtonBox.Cancel).setText("취소")
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
@@ -69,9 +76,15 @@ class AddContactDialog(QDialog):
         return self._result_values
 
     @staticmethod
-    def get_contact_info(parent: QWidget | None = None) -> tuple[str, str, int] | None:
-        """다이얼로그를 실행하고 결과를 바로 반환하는 헬퍼."""
-        dialog = AddContactDialog(parent)
+    def get_contact_info(
+        parent: QWidget | None = None, initial: tuple[str, str, int] | None = None
+    ) -> tuple[str, str, int] | None:
+        """다이얼로그를 실행하고 결과를 바로 반환하는 헬퍼.
+
+        `initial`을 넘기면 편집 모드로 동작해 필드가 미리 채워지고
+        타이틀/버튼 문구가 "편집/저장"으로 바뀐다.
+        """
+        dialog = AddContactDialog(parent, initial=initial)
         if dialog.exec() == QDialog.Accepted:
             return dialog.get_values()
         return None

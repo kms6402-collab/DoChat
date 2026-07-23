@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -105,6 +106,9 @@ class ConversationList(QWidget):
     """연락처와 그룹을 함께 보여주는 대화 목록 사이드바."""
 
     conversation_selected = Signal(str, str)  # conversation_id, conversation_type
+    edit_contact_requested = Signal(str)      # contact_id
+    delete_contact_requested = Signal(str)    # contact_id
+    delete_group_requested = Signal(str)      # group_id
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -116,6 +120,8 @@ class ConversationList(QWidget):
         self._list = QListWidget()
         self._list.setObjectName("ConversationList")
         self._list.itemClicked.connect(self._on_item_clicked)
+        self._list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._on_context_menu_requested)
         layout.addWidget(self._list)
 
         # (conversation_id, conversation_type) -> QListWidgetItem
@@ -158,6 +164,30 @@ class ConversationList(QWidget):
             return
         conversation_id, conversation_type = key
         self.conversation_selected.emit(conversation_id, conversation_type)
+
+    def _on_context_menu_requested(self, pos) -> None:
+        item = self._list.itemAt(pos)
+        if item is None:
+            return
+        key = item.data(Qt.UserRole)
+        if key is None:
+            return
+        conversation_id, conversation_type = key
+
+        menu = QMenu(self)
+        if conversation_type == ConversationType.DIRECT:
+            edit_action = menu.addAction("편집")
+            delete_action = menu.addAction("삭제")
+            chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
+            if chosen is edit_action:
+                self.edit_contact_requested.emit(conversation_id)
+            elif chosen is delete_action:
+                self.delete_contact_requested.emit(conversation_id)
+        else:
+            leave_action = menu.addAction("그룹 나가기(삭제)")
+            chosen = menu.exec(self._list.viewport().mapToGlobal(pos))
+            if chosen is leave_action:
+                self.delete_group_requested.emit(conversation_id)
 
     def current_selection(self) -> tuple[str, str] | None:
         item = self._list.currentItem()

@@ -26,6 +26,21 @@ class PeerManager:
     def get_contact(self, contact_id: str) -> Contact | None:
         return self.contacts.get(contact_id)
 
+    def update_contact(self, contact_id: str, nickname: str, ip: str, port: int) -> Contact | None:
+        contact = self.contacts.get(contact_id)
+        if contact is None:
+            return None
+        contact.nickname = nickname
+        contact.ip = ip
+        contact.port = port
+        self.storage.add_contact(contact)
+        self.contacts[contact_id] = contact
+        return contact
+
+    def remove_contact(self, contact_id: str) -> None:
+        self.contacts.pop(contact_id, None)
+        self.storage.remove_contact(contact_id)
+
     def mark_online(self, contact_id: str) -> None:
         contact = self.contacts.get(contact_id)
         if contact is None:

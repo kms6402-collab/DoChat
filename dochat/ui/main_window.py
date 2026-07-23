@@ -158,6 +158,9 @@ class MainWindow(QMainWindow):
         self._settings_button.clicked.connect(self._on_settings_clicked)
 
         self.conversation_list.conversation_selected.connect(self._on_conversation_selected)
+        self.conversation_list.edit_contact_requested.connect(self._on_edit_contact_requested)
+        self.conversation_list.delete_contact_requested.connect(self._on_delete_contact_requested)
+        self.conversation_list.delete_group_requested.connect(self._on_delete_group_requested)
 
         self.compose_bar.text_submitted.connect(self._on_text_submitted)
         self.compose_bar.file_selected.connect(self._on_file_to_send)
@@ -268,6 +271,64 @@ class MainWindow(QMainWindow):
         self.chat_engine.send_file(
             self._current_conversation_id, self._current_conversation_type, file_path
         )
+
+    def _clear_current_conversation(self) -> None:
+        """현재 열려 있는 대화 화면을 비우고 선택을 해제한다."""
+        self._current_conversation_id = None
+        self._current_conversation_type = None
+        self.chat_view.clear()
+        self.compose_bar.set_active(False)
+        self._update_header()
+
+    def _on_edit_contact_requested(self, contact_id: str) -> None:
+        contact = self.chat_engine.get_contact(contact_id)
+        if contact is None:
+            return
+        values = AddContactDialog.get_contact_info(
+            self, initial=(contact.nickname, contact.ip, contact.port)
+        )
+        if not values:
+            return
+        nickname, ip, port = values
+        self.chat_engine.update_contact(contact_id, nickname, ip, port)
+        self._refresh_lists()
+        if self._current_conversation_id == contact_id:
+            self._update_header()
+
+    def _on_delete_contact_requested(self, contact_id: str) -> None:
+        contact = self.chat_engine.get_contact(contact_id)
+        name = contact.nickname if contact else contact_id
+        answer = QMessageBox.question(
+            self,
+            "연락처 삭제",
+            f"'{name}' 연락처를 정말 삭제하시겠습니까?",
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.chat_engine.remove_contact(contact_id)
+        if (
+            self._current_conversation_type == ConversationType.DIRECT
+            and self._current_conversation_id == contact_id
+        ):
+            self._clear_current_conversation()
+        self._refresh_lists()
+
+    def _on_delete_group_requested(self, group_id: str) -> None:
+        name = self._find_group_name(group_id)
+        answer = QMessageBox.question(
+            self,
+            "그룹 나가기",
+            f"'{name}' 그룹에서 나가시겠습니까? (목록에서 삭제됩니다)",
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.chat_engine.leave_group(group_id)
+        if (
+            self._current_conversation_type == ConversationType.GROUP
+            and self._current_conversation_id == group_id
+        ):
+            self._clear_current_conversation()
+        self._refresh_lists()
 
     # ------------------------------------------------------------------
     # ChatEngine 시그널 핸들러

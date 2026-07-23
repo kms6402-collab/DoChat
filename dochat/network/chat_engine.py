@@ -125,6 +125,23 @@ class ChatEngine(QObject):
     def get_contact(self, contact_id: str) -> Contact | None:
         return self.peer_manager.get_contact(contact_id)
 
+    def update_contact(self, contact_id: str, nickname: str, ip: str, port: int) -> Contact | None:
+        return self.peer_manager.update_contact(contact_id, nickname, ip, port)
+
+    def remove_contact(self, contact_id: str) -> None:
+        self.peer_manager.remove_contact(contact_id)
+
+        # 해당 연락처가 속한 그룹들의 멤버 목록에서도 제거한다 (그룹 자체는 유지).
+        for group in self._groups.values():
+            if contact_id in group.member_ids:
+                group.member_ids.remove(contact_id)
+                self.storage.add_group(group)
+
+    def leave_group(self, group_id: str) -> None:
+        """로컬 그룹 목록/DB에서만 그룹을 제거한다 (다른 멤버에게는 알리지 않음)."""
+        self._groups.pop(group_id, None)
+        self.storage.remove_group(group_id)
+
     def create_group(self, name: str, member_ids: list[str]) -> Group:
         group = Group(id=str(uuid.uuid4()), name=name, member_ids=list(dict.fromkeys(member_ids)))
         self.storage.add_group(group)
