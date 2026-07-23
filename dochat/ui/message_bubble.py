@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from dochat.models.message import FileRecord, FileStatus, MessageType
 from dochat.models.message import Message
+from dochat.ui.themes import get_theme_colors
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 MAX_THUMB = 200
@@ -56,6 +57,7 @@ class MessageBubble(QWidget):
         show_sender: bool = False,
         file_record: FileRecord | None = None,
         parent: QWidget | None = None,
+        storage=None,
     ):
         super().__init__(parent)
         self._message = message
@@ -63,6 +65,10 @@ class MessageBubble(QWidget):
         self._file_record = file_record
         self._progress_bar: QProgressBar | None = None
         self._read_label: QLabel | None = None
+
+        # 채팅 테마/커스텀 색 반영: 정적 QSS의 objectName 규칙 대신 실행 중
+        # 계산된 색상을 인라인 스타일시트로 적용해 즉시 반영되도록 한다.
+        self._mine_bg, self._mine_text, self._other_bg, self._other_text = get_theme_colors(storage)
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(12, 3, 12, 3)
@@ -78,6 +84,8 @@ class MessageBubble(QWidget):
 
         bubble_frame = _ClickableFrame(on_double_click=self._open_file)
         bubble_frame.setObjectName("BubbleFrameMine" if is_mine else "BubbleFrameOther")
+        bubble_bg = self._mine_bg if is_mine else self._other_bg
+        bubble_frame.setStyleSheet(f"background-color: {bubble_bg}; border-radius: 12px;")
         bubble_layout = QVBoxLayout(bubble_frame)
         bubble_layout.setContentsMargins(12, 8, 12, 8)
         bubble_layout.setSpacing(6)
@@ -132,6 +140,8 @@ class MessageBubble(QWidget):
     def _build_text_content(self, layout: QVBoxLayout) -> None:
         text_label = QLabel(self._message.text or "")
         text_label.setObjectName("BubbleTextMine" if self._is_mine else "BubbleTextOther")
+        text_color = self._mine_text if self._is_mine else self._other_text
+        text_label.setStyleSheet(f"color: {text_color}; background: transparent;")
         text_label.setWordWrap(True)
         text_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(text_label)
@@ -168,9 +178,8 @@ class MessageBubble(QWidget):
             name_row.addWidget(icon_label)
         name_label = QLabel(filename)
         name_label.setObjectName("FileNameLabel")
-        name_label.setStyleSheet(
-            "color: #FFFFFF;" if self._is_mine else "color: #2C2F36;"
-        )
+        file_name_color = self._mine_text if self._is_mine else self._other_text
+        name_label.setStyleSheet(f"color: {file_name_color};")
         name_label.setWordWrap(True)
         name_row.addWidget(name_label, 1)
         layout.addLayout(name_row)

@@ -321,6 +321,8 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self._notify_sound = self.storage.get_setting("notify_sound", "1") == "1"
             self._update_header()
+            if self._current_conversation_id is not None:
+                self.chat_view.set_conversation(self._current_conversation_id, self._current_conversation_type, self.chat_engine.client_id)
 
     def _on_conversation_selected(self, conversation_id: str, conversation_type: str) -> None:
         self._current_conversation_id = conversation_id

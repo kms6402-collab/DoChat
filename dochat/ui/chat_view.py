@@ -99,6 +99,7 @@ class ChatView(QWidget):
             sender_name=sender_name,
             show_sender=show_sender,
             file_record=file_record,
+            storage=self._storage,
         )
         if message.file_id:
             self._bubbles_by_file_id[message.file_id] = bubble

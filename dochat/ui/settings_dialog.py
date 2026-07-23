@@ -8,10 +8,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QColorDialog,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -29,6 +31,7 @@ from PySide6.QtWidgets import (
 from dochat import config, update_checker
 from dochat.models.storage import Storage
 from dochat.network.chat_engine import ChatEngine
+from dochat.ui import themes
 
 
 class SettingsDialog(QDialog):
@@ -105,6 +108,38 @@ class SettingsDialog(QDialog):
         port_hint.setObjectName("DialogHint")
         form.addRow("", port_hint)
 
+        # --- 채팅 테마 -----------------------------------------------------
+        self._mine_color: str = storage.get_setting("bubble_mine_color", "") or ""
+        self._other_color: str = storage.get_setting("bubble_other_color", "") or ""
+
+        self._theme_combo = QComboBox()
+        for key, theme in themes.THEMES.items():
+            self._theme_combo.addItem(theme.name, key)
+        current_theme_key = storage.get_setting("bubble_theme", themes.DEFAULT_THEME_KEY)
+        theme_index = self._theme_combo.findData(current_theme_key)
+        self._theme_combo.setCurrentIndex(theme_index if theme_index >= 0 else 0)
+        self._theme_combo.currentIndexChanged.connect(lambda _: self._update_color_buttons())
+        form.addRow("채팅 테마", self._theme_combo)
+
+        color_row = QHBoxLayout()
+        self._mine_color_button = QPushButton("내 말풍선 색")
+        self._mine_color_button.clicked.connect(self._on_pick_mine_color)
+        self._other_color_button = QPushButton("상대 말풍선 색")
+        self._other_color_button.clicked.connect(self._on_pick_other_color)
+        reset_color_button = QPushButton("기본값으로")
+        reset_color_button.clicked.connect(self._on_reset_colors)
+        color_row.addWidget(self._mine_color_button)
+        color_row.addWidget(self._other_color_button)
+        color_row.addWidget(reset_color_button)
+        form.addRow("말풍선 색 커스텀", color_row)
+
+        color_hint = QLabel("커스텀 색을 지정하면 선택한 테마보다 우선 적용됩니다.")
+        color_hint.setObjectName("DialogHint")
+        color_hint.setWordWrap(True)
+        form.addRow("", color_hint)
+
+        self._update_color_buttons()
+
         # --- 보안 키(암호화) -----------------------------------------------
         self._network_key_edit = QLineEdit(storage.get_setting("network_key", "") or "")
         self._network_key_edit.setEchoMode(QLineEdit.Password)
@@ -159,6 +194,46 @@ class SettingsDialog(QDialog):
         path = self._selected_folder or str(config.RECEIVED_FILES_DIR)
         Path(path).mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    # ------------------------------------------------------------------
+    def _current_theme_key(self) -> str:
+        key = self._theme_combo.currentData()
+        return key if key else themes.DEFAULT_THEME_KEY
+
+    def _update_color_buttons(self) -> None:
+        """색상 버튼 배경을 현재 지정된 색(커스텀 우선, 없으면 테마 색)으로 갱신한다."""
+        theme = themes.THEMES.get(self._current_theme_key(), themes.THEMES[themes.DEFAULT_THEME_KEY])
+        mine_color = self._mine_color or theme.mine_bg
+        other_color = self._other_color or theme.other_bg
+        self._mine_color_button.setStyleSheet(
+            f"background-color: {mine_color}; color: {theme.mine_text};"
+        )
+        self._other_color_button.setStyleSheet(
+            f"background-color: {other_color}; color: {theme.other_text};"
+        )
+
+    def _on_pick_mine_color(self) -> None:
+        initial = QColor(self._mine_color) if self._mine_color else QColor(
+            themes.THEMES[self._current_theme_key()].mine_bg
+        )
+        color = QColorDialog.getColor(initial, self, "내 말풍선 색 선택")
+        if color.isValid():
+            self._mine_color = color.name()
+            self._update_color_buttons()
+
+    def _on_pick_other_color(self) -> None:
+        initial = QColor(self._other_color) if self._other_color else QColor(
+            themes.THEMES[self._current_theme_key()].other_bg
+        )
+        color = QColorDialog.getColor(initial, self, "상대 말풍선 색 선택")
+        if color.isValid():
+            self._other_color = color.name()
+            self._update_color_buttons()
+
+    def _on_reset_colors(self) -> None:
+        self._mine_color = ""
+        self._other_color = ""
+        self._update_color_buttons()
 
     # ------------------------------------------------------------------
     def _on_check_update(self) -> None:
@@ -230,5 +305,9 @@ class SettingsDialog(QDialog):
         self._storage.set_setting("listen_port", str(self._port_spin.value()))
         self._storage.set_setting("notify_sound", "1" if self._notify_check.isChecked() else "0")
         self._storage.set_setting("network_key", self._network_key_edit.text())
+
+        self._storage.set_setting("bubble_theme", self._current_theme_key())
+        self._storage.set_setting("bubble_mine_color", self._mine_color)
+        self._storage.set_setting("bubble_other_color", self._other_color)
 
         self.accept()
