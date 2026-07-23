@@ -14,7 +14,7 @@ pip install -r requirements.txt -q
 pip install pyinstaller -q
 
 rm -rf build dist DoChat.spec
-python -m PyInstaller --windowed --name DoChat --noconfirm main.py
+python -m PyInstaller --windowed --name DoChat --icon assets/icon.icns --add-data "assets:assets" --noconfirm main.py
 
 mkdir -p packaging/macos
 pkgbuild --component dist/DoChat.app \
