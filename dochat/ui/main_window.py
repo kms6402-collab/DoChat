@@ -21,10 +21,12 @@ from dochat import config
 from dochat.models.message import ConversationType
 from dochat.models.storage import Storage
 from dochat.network.chat_engine import ChatEngine
+from dochat.network.discovery import LanDiscovery
 from dochat.ui.add_contact_dialog import AddContactDialog
 from dochat.ui.chat_view import ChatView
 from dochat.ui.compose_bar import ComposeBar
 from dochat.ui.conversation_list import ConversationList
+from dochat.ui.discover_dialog import DiscoverDialog
 from dochat.ui.file_room import FileRoomDialog
 from dochat.ui.new_group_dialog import NewGroupDialog
 from dochat.ui.settings_dialog import SettingsDialog
@@ -50,6 +52,13 @@ class MainWindow(QMainWindow):
         listen_port = int(saved_port) if saved_port else config.DEFAULT_LISTEN_PORT
 
         self.chat_engine = ChatEngine(self.storage, listen_port=listen_port)
+
+        self.discovery = LanDiscovery(
+            self.chat_engine.client_id,
+            lambda: self.chat_engine.my_nickname,
+            self.chat_engine.my_local_address[1],
+        )
+        self.discovery.start()
 
         self._notify_sound = self.storage.get_setting("notify_sound", "1") == "1"
 
@@ -98,6 +107,10 @@ class MainWindow(QMainWindow):
         button_row.addWidget(self._new_contact_button)
         button_row.addWidget(self._new_group_button)
         header_layout.addLayout(button_row)
+
+        self._discover_button = QPushButton("\U0001F50D 찾기")
+        self._discover_button.setObjectName("SidebarActionButton")
+        header_layout.addWidget(self._discover_button)
 
         self._file_room_button = QPushButton("\U0001F4C1 파일함 / 전송 히스토리")
         self._file_room_button.setObjectName("SidebarActionButton")
@@ -154,6 +167,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         self._new_contact_button.clicked.connect(self._on_new_contact_clicked)
         self._new_group_button.clicked.connect(self._on_new_group_clicked)
+        self._discover_button.clicked.connect(self._on_discover_clicked)
         self._file_room_button.clicked.connect(self._on_file_room_clicked)
         self._settings_button.clicked.connect(self._on_settings_clicked)
 
@@ -222,6 +236,11 @@ class MainWindow(QMainWindow):
             return
         name, member_ids = values
         self.chat_engine.create_group(name, member_ids)
+        self._refresh_lists()
+
+    def _on_discover_clicked(self) -> None:
+        dialog = DiscoverDialog(self.discovery, self.chat_engine, parent=self)
+        dialog.exec()
         self._refresh_lists()
 
     def _on_file_room_clicked(self) -> None:
