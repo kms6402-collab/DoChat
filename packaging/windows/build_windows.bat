@@ -18,6 +18,8 @@ pip install --upgrade pip
 pip install -r requirements.txt
 pip install pyinstaller
 
+python scripts\generate_build_info.py
+
 rmdir /s /q build 2>nul
 rmdir /s /q dist 2>nul
 del DoChat.spec 2>nul

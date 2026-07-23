@@ -41,7 +41,7 @@ class SettingsDialog(QDialog):
 
         self.setWindowTitle("환경설정")
         self.setModal(True)
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(560)
 
         self._selected_folder: str = str(config.RECEIVED_FILES_DIR)
 
@@ -50,11 +50,17 @@ class SettingsDialog(QDialog):
 
         form = QFormLayout()
         form.setSpacing(10)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         root.addLayout(form)
 
         # --- 내 닉네임 -----------------------------------------------
+        # 표시 이름이라 아주 길 필요는 없지만, 기존 필드가 시각적으로 너무
+        # 좁아 보인다는 피드백에 따라 최소 폭을 넉넉히 확보하고 입력 가능
+        # 글자 수도 여유 있게(40자) 늘렸다.
         self._nickname_edit = QLineEdit(chat_engine.my_nickname)
         self._nickname_edit.setPlaceholderText("예: 김철수")
+        self._nickname_edit.setMaxLength(40)
+        self._nickname_edit.setMinimumWidth(360)
         form.addRow("내 닉네임", self._nickname_edit)
 
         # --- 내 연결 정보 ----------------------------------------------
@@ -107,7 +113,7 @@ class SettingsDialog(QDialog):
 
         # --- 버전 정보 / 업데이트 -----------------------------------------
         version_row = QHBoxLayout()
-        version_label = QLabel(f"버전: {config.APP_VERSION}")
+        version_label = QLabel(f"버전: {config.get_version_string()}")
         version_label.setObjectName("DialogHint")
         self._update_button = QPushButton("업데이트 확인")
         self._update_button.clicked.connect(self._on_check_update)

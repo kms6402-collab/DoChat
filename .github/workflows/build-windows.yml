@@ -25,6 +25,9 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: 빌드 정보 생성 (버전에 커밋/날짜 반영)
+        run: python scripts\generate_build_info.py
+
       - name: PyInstaller로 exe 빌드
         run: |
           pyinstaller --windowed --onefile --name DoChat --icon assets\icon.ico --add-data "assets;assets" main.py

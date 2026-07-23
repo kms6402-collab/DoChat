@@ -13,6 +13,8 @@ pip install --upgrade pip -q
 pip install -r requirements.txt -q
 pip install pyinstaller -q
 
+python scripts/generate_build_info.py
+
 rm -rf build_v2 dist_v2 DoChat.spec
 python -m PyInstaller --windowed --name DoChat --icon assets/icon.icns --add-data "assets:assets" \
     --distpath dist_v2 --workpath build_v2 --noconfirm main.py

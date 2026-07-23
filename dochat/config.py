@@ -7,6 +7,21 @@ from pathlib import Path
 APP_NAME = "DoChat"
 APP_VERSION = "1.0.0"
 
+try:
+    # 패키징 스크립트/CI가 빌드 직전에 생성하는 파일. 소스에서 바로 실행하는
+    # 개발 환경에는 없을 수 있으므로 없으면 조용히 None으로 둔다.
+    from dochat._build_info import BUILD_COMMIT, BUILD_DATE
+except ImportError:
+    BUILD_COMMIT = None
+    BUILD_DATE = None
+
+
+def get_version_string() -> str:
+    """빌드 커밋/날짜가 있으면 함께, 없으면 버전만 반환한다."""
+    if BUILD_COMMIT:
+        return f"{APP_VERSION} ({BUILD_COMMIT}, {BUILD_DATE})"
+    return APP_VERSION
+
 # 로컬 데이터/수신 파일 저장 위치
 APP_DIR = Path.home() / ".dochat"
 DB_PATH = APP_DIR / "dochat.db"
