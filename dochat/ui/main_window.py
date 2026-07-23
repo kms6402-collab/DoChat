@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from dochat import config
-from dochat.models.message import ConversationType
+from dochat.models.message import ConversationType, MessageType
 from dochat.models.storage import Storage
 from dochat.network.chat_engine import ChatEngine
 from dochat.network.discovery import LanDiscovery
@@ -77,6 +77,7 @@ class MainWindow(QMainWindow):
         self.discovery.start()
 
         self._notify_sound = self.storage.get_setting("notify_sound", "1") == "1"
+        self._notify_popup = self.storage.get_setting("notify_popup", "1") == "1"
 
         self._current_conversation_id: str | None = None
         self._current_conversation_type: str | None = None
@@ -240,8 +241,10 @@ class MainWindow(QMainWindow):
 
         self.chat_engine.message_received.connect(self._on_message_received)
         self.chat_engine.message_received.connect(self._on_message_received_for_badge)
+        self.chat_engine.message_received.connect(self._on_message_received_for_tray)
         self.chat_engine.file_progress.connect(self._on_file_progress)
         self.chat_engine.file_completed.connect(self._on_file_completed)
+        self.chat_engine.file_completed.connect(self._on_file_completed_for_tray)
         self.chat_engine.contact_status_changed.connect(self._on_contact_status_changed)
         self.chat_engine.group_updated.connect(self._on_group_updated)
         self.chat_engine.messages_read_up_to.connect(self._on_messages_read_up_to)
@@ -320,6 +323,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self.chat_engine, self.storage, parent=self)
         if dialog.exec() == QDialog.Accepted:
             self._notify_sound = self.storage.get_setting("notify_sound", "1") == "1"
+            self._notify_popup = self.storage.get_setting("notify_popup", "1") == "1"
             self._update_header()
 
     def _on_conversation_selected(self, conversation_id: str, conversation_type: str) -> None:
@@ -452,6 +456,43 @@ class MainWindow(QMainWindow):
             message.conversation_id,
             message.conversation_type,
             self._unread_counts[message.conversation_id],
+        )
+
+    def _on_message_received_for_tray(self, message) -> None:
+        """창이 트레이에 내려가 있을 때 새 메시지를 트레이 풍선 알림으로 표시한다.
+
+        (로컬 UI 전용 상태 — 기존 _on_message_received와는 별도의 슬롯으로 동작한다.)
+        """
+        if not self._notify_popup or self.isVisible():
+            return
+        if message.sender_id == self.chat_engine.client_id:
+            return
+
+        contact = self.chat_engine.get_contact(message.sender_id)
+        sender_name = contact.nickname if contact else message.sender_id
+
+        if message.conversation_type == ConversationType.GROUP:
+            group_name = self._find_group_name(message.conversation_id)
+            title = f"{group_name} - {sender_name}"
+        else:
+            title = sender_name
+
+        if message.type == MessageType.FILE:
+            body = "파일을 보냈습니다."
+        else:
+            body = message.text or ""
+
+        self.tray_icon.showMessage(title, body, QSystemTrayIcon.Information, 4000)
+
+    def _on_file_completed_for_tray(self, file_id: str, success: bool) -> None:
+        """창이 트레이에 내려가 있을 때 파일 수신 완료를 트레이 풍선 알림으로 표시한다."""
+        if not self._notify_popup or self.isVisible() or not success:
+            return
+        record = self.storage.get_file_record(file_id)
+        if record is None or record.direction != "in":
+            return
+        self.tray_icon.showMessage(
+            "DoChat", f"파일 수신 완료: {record.filename}", QSystemTrayIcon.Information, 4000
         )
 
     def _on_conversation_selected_clear_badge(self, conversation_id: str, conversation_type: str) -> None:
