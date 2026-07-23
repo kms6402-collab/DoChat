@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import time
+from typing import Callable
 
 from PySide6.QtCore import QUrl, Qt
 from PySide6.QtGui import QDesktopServices, QPixmap
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QProgressBar,
+    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -19,6 +21,12 @@ from PySide6.QtWidgets import (
 from dochat.models.message import FileRecord, FileStatus, MessageType
 from dochat.models.message import Message
 from dochat.ui.themes import get_theme_colors
+
+try:
+    # 같은 앱 내부 재사용: 폴더에서 보기(OS별 파일 탐색기 열기) 로직을 file_room과 공유한다.
+    from dochat.ui.file_room import _reveal_in_file_manager
+except ImportError:  # pragma: no cover - 순환참조 등 예외 상황에 대한 안전장치
+    _reveal_in_file_manager = None
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 MAX_THUMB = 200
@@ -56,6 +64,7 @@ class MessageBubble(QWidget):
         sender_name: str = "",
         show_sender: bool = False,
         file_record: FileRecord | None = None,
+        on_cancel_requested: Callable[[str, str], None] | None = None,
         parent: QWidget | None = None,
         storage=None,
     ):
@@ -63,7 +72,11 @@ class MessageBubble(QWidget):
         self._message = message
         self._is_mine = is_mine
         self._file_record = file_record
+        self._on_cancel_requested = on_cancel_requested
         self._progress_bar: QProgressBar | None = None
+        self._cancel_button: QPushButton | None = None
+        self._file_action_row: QHBoxLayout | None = None
+        self._cancelled_label: QLabel | None = None
         self._read_label: QLabel | None = None
 
         # 채팅 테마/커스텀 색 반영: 정적 QSS의 objectName 규칙 대신 실행 중
@@ -89,6 +102,7 @@ class MessageBubble(QWidget):
         bubble_layout = QVBoxLayout(bubble_frame)
         bubble_layout.setContentsMargins(12, 8, 12, 8)
         bubble_layout.setSpacing(6)
+        self._bubble_layout = bubble_layout
 
         if message.type == MessageType.FILE:
             self._build_file_content(bubble_layout)
@@ -199,8 +213,59 @@ class MessageBubble(QWidget):
             bar.setFixedHeight(8)
             layout.addWidget(bar)
             self._progress_bar = bar
+
+            cancel_row = QHBoxLayout()
+            cancel_row.setContentsMargins(0, 0, 0, 0)
+            cancel_row.addStretch(1)
+            cancel_button = QPushButton("취소")
+            cancel_button.setCursor(Qt.PointingHandCursor)
+            cancel_button.setFixedHeight(20)
+            cancel_button.clicked.connect(self._on_cancel_clicked)
+            cancel_row.addWidget(cancel_button)
+            layout.addLayout(cancel_row)
+            self._cancel_button = cancel_button
+        elif status == FileStatus.CANCELLED:
+            self._progress_bar = None
+            cancelled_label = QLabel("취소됨")
+            cancelled_label.setStyleSheet("color: #9AA1AC; font-size: 11px; background: transparent;")
+            layout.addWidget(cancelled_label)
+            self._cancelled_label = cancelled_label
         else:
             self._progress_bar = None
+
+        if status == FileStatus.COMPLETED:
+            action_row = QHBoxLayout()
+            action_row.setContentsMargins(0, 0, 0, 0)
+            action_row.setSpacing(6)
+            open_button = QPushButton("열기")
+            open_button.setCursor(Qt.PointingHandCursor)
+            open_button.setFixedHeight(22)
+            open_button.clicked.connect(self._open_file)
+            reveal_button = QPushButton("폴더에서 보기")
+            reveal_button.setCursor(Qt.PointingHandCursor)
+            reveal_button.setFixedHeight(22)
+            reveal_button.clicked.connect(self._reveal_in_folder)
+            action_row.addWidget(open_button)
+            action_row.addWidget(reveal_button)
+            action_row.addStretch(1)
+            layout.addLayout(action_row)
+            self._file_action_row = action_row
+
+    def _on_cancel_clicked(self) -> None:
+        if self._on_cancel_requested is None or self._file_record is None:
+            return
+        self._on_cancel_requested(self._file_record.file_id, self._file_record.direction)
+
+    def _reveal_in_folder(self) -> None:
+        if not self._file_record:
+            return
+        path = self._file_record.local_path
+        if not path or not os.path.exists(path):
+            return
+        if _reveal_in_file_manager is not None:
+            _reveal_in_file_manager(path)
+        else:  # pragma: no cover - import 실패 시 최소한 폴더는 연다
+            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))
 
     def _open_file(self) -> None:
         if self._message.type != MessageType.FILE:
@@ -234,8 +299,42 @@ class MessageBubble(QWidget):
         self._progress_bar.setValue(min(100, max(0, pct)))
 
     def mark_completed(self, success: bool = True) -> None:
-        """전송/수신 완료 시 진행률 바를 숨긴다."""
+        """전송/수신 완료 시 진행률 바/취소 버튼을 숨기고, 성공이면 열기/폴더에서 보기
+        버튼을 표시한다(대화가 다시 로드되지 않아 버블이 재생성되지 않는 경우 대비)."""
         if self._progress_bar is not None:
             self._progress_bar.hide()
+        if self._cancel_button is not None:
+            self._cancel_button.hide()
         if success and self._file_record is not None:
             self._file_record.status = FileStatus.COMPLETED
+            if self._file_action_row is None and self._bubble_layout is not None:
+                action_row = QHBoxLayout()
+                action_row.setContentsMargins(0, 0, 0, 0)
+                action_row.setSpacing(6)
+                open_button = QPushButton("열기")
+                open_button.setCursor(Qt.PointingHandCursor)
+                open_button.setFixedHeight(22)
+                open_button.clicked.connect(self._open_file)
+                reveal_button = QPushButton("폴더에서 보기")
+                reveal_button.setCursor(Qt.PointingHandCursor)
+                reveal_button.setFixedHeight(22)
+                reveal_button.clicked.connect(self._reveal_in_folder)
+                action_row.addWidget(open_button)
+                action_row.addWidget(reveal_button)
+                action_row.addStretch(1)
+                self._bubble_layout.insertLayout(self._bubble_layout.count() - 1, action_row)
+                self._file_action_row = action_row
+
+    def mark_cancelled(self) -> None:
+        """전송/수신 취소 시 진행률 바/취소 버튼을 숨기고 "취소됨" 라벨을 표시한다."""
+        if self._progress_bar is not None:
+            self._progress_bar.hide()
+        if self._cancel_button is not None:
+            self._cancel_button.hide()
+        if self._file_record is not None:
+            self._file_record.status = FileStatus.CANCELLED
+        if self._cancelled_label is None and self._bubble_layout is not None:
+            cancelled_label = QLabel("취소됨")
+            cancelled_label.setStyleSheet("color: #9AA1AC; font-size: 11px; background: transparent;")
+            self._bubble_layout.insertWidget(self._bubble_layout.count() - 1, cancelled_label)
+            self._cancelled_label = cancelled_label

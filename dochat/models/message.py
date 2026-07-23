@@ -19,6 +19,7 @@ class FileStatus:
     RECEIVING = "receiving"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass

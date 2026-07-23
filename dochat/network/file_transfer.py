@@ -1,8 +1,9 @@
 """파일 송수신 진행 상태를 관리하는 헬퍼 클래스들.
 
-stop-and-wait 방식(청크 하나 보내고 ACK 받은 뒤 다음 청크)만 지원하므로
-윈도우/파이프라이닝 로직은 없다. 실제 네트워크 송수신 트리거는
-``ChatEngine``이 담당하고, 여기서는 파일 I/O와 진행 상태만 다룬다.
+``OutgoingFileTransfer``는 파이프라이닝(윈도우) 방식을 지원한다: 여러 청크를
+동시에 "발송했지만 아직 ACK 안 받음(in-flight)" 상태로 둘 수 있다. 실제
+네트워크 송수신 트리거는 ``ChatEngine``이 담당하고, 여기서는 파일 I/O와
+진행 상태만 다룬다.
 """
 from __future__ import annotations
 
@@ -16,7 +17,12 @@ from dochat.config import FILE_CHUNK_SIZE
 
 
 class OutgoingFileTransfer:
-    """보낼 파일을 청크로 미리 분할해 들고 있으면서 진행 인덱스를 추적한다."""
+    """보낼 파일을 청크로 미리 분할해 들고 있으면서 파이프라인 진행 상태를 추적한다.
+
+    ``next_to_send``까지는 아직 "새로 발송"하지 않은 인덱스이고, 그 이전 인덱스들은
+    이미 발송을 시작했다는 뜻이다. 발송했지만 아직 ACK를 못 받은 인덱스는
+    ``in_flight``에 남아있고, ACK를 받으면 거기서 빠지며 ``acked_count``가 늘어난다.
+    """
 
     def __init__(self, file_path: str, file_id: str | None = None):
         self.file_path = Path(file_path)
@@ -37,23 +43,35 @@ class OutgoingFileTransfer:
             self.chunks = [b""]
 
         self.total_chunks = len(self.chunks)
-        self.next_index = 0  # 다음에 보낼 청크 인덱스
+        self.next_to_send = 0  # 다음에 "새로" 발송할 청크 인덱스
+        self.in_flight: set[int] = set()  # 발송했지만 아직 ACK 못 받은 인덱스들
+        self.acked_count = 0  # ACK 받은 청크 수 (진행률 표시용)
 
-    def has_next(self) -> bool:
-        return self.next_index < self.total_chunks
-
-    def peek_next(self) -> tuple[int, bytes] | None:
-        """다음에 보낼 (index, data)를 돌려준다. 더 없으면 None."""
-        if not self.has_next():
+    def dispatch_next(self) -> tuple[int, bytes] | None:
+        """다음 청크를 in-flight로 표시하고 (index, data)를 돌려준다. 더 없으면 None."""
+        if self.next_to_send >= self.total_chunks:
             return None
-        return self.next_index, self.chunks[self.next_index]
+        index = self.next_to_send
+        self.next_to_send += 1
+        self.in_flight.add(index)
+        return index, self.chunks[index]
 
-    def advance(self) -> None:
-        self.next_index += 1
+    def mark_acked(self, index: int) -> None:
+        """해당 인덱스의 ACK를 받았음을 기록한다."""
+        self.in_flight.discard(index)
+        self.acked_count += 1
+
+    @property
+    def has_pending_dispatch(self) -> bool:
+        return self.next_to_send < self.total_chunks
+
+    @property
+    def is_fully_acked(self) -> bool:
+        return self.acked_count >= self.total_chunks
 
     @property
     def done_chunks(self) -> int:
-        return self.next_index
+        return self.acked_count
 
 
 class IncomingFileTransfer:

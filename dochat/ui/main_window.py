@@ -245,6 +245,7 @@ class MainWindow(QMainWindow):
         self.chat_engine.file_progress.connect(self._on_file_progress)
         self.chat_engine.file_completed.connect(self._on_file_completed)
         self.chat_engine.file_completed.connect(self._on_file_completed_for_tray)
+        self.chat_engine.file_cancelled.connect(self._on_file_cancelled)
         self.chat_engine.contact_status_changed.connect(self._on_contact_status_changed)
         self.chat_engine.group_updated.connect(self._on_group_updated)
         self.chat_engine.messages_read_up_to.connect(self._on_messages_read_up_to)
@@ -534,6 +535,11 @@ class MainWindow(QMainWindow):
             self._file_room.refresh()
 
         self._refresh_lists()
+
+    def _on_file_cancelled(self, file_id: str, direction: str) -> None:
+        self.chat_view.mark_file_cancelled(file_id)
+        if self._file_room is not None:
+            self._file_room.refresh()
 
     def _on_contact_status_changed(self, contact_id: str, online: bool) -> None:
         self.conversation_list.update_presence(contact_id, online)
