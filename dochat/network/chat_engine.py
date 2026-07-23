@@ -42,6 +42,7 @@ class ChatEngine(QObject):
     file_completed = Signal(str, bool)          # file_id, success
     contact_status_changed = Signal(str, bool)  # contact_id, online
     group_updated = Signal(str)                 # group_id
+    messages_read_up_to = Signal(str, float)    # conversation_id, up_to_ts (읽음 확인 도착)
 
     def __init__(self, storage: Storage, listen_port: int = DEFAULT_LISTEN_PORT, parent=None):
         super().__init__(parent)
@@ -54,6 +55,12 @@ class ChatEngine(QObject):
 
         self.peer_manager = PeerManager(storage)
         self._groups: dict[str, Group] = {g.id: g for g in storage.get_groups()}
+
+        # 오프라인 재전송 대기열: contact_id -> [{"message_id", "payload"}, ...]
+        # 앱을 껐다 켜도 유지되도록, storage에 status='pending'으로 남아있는
+        # (내가 보낸) TEXT 메시지를 읽어와 재구성한다.
+        self._pending_retry: dict[str, list[dict]] = {}
+        self._restore_pending_retry()
 
         # 원격 CLIENT_ID -> 로컬 Contact.id 매핑 (주소로 학습되거나 자동 생성됨)
         self._remote_to_local: dict[str, str] = {}
@@ -184,6 +191,31 @@ class ChatEngine(QObject):
         return self.storage.get_all_files()
 
     # ------------------------------------------------------------------
+    # 읽음 확인
+    # ------------------------------------------------------------------
+    def mark_conversation_read(self, conversation_id: str, conversation_type: str) -> None:
+        """상대(들)가 보낸 메시지 중 가장 최근 타임스탬프까지 읽었다고 알린다."""
+        messages = self.storage.get_messages(conversation_id)
+        latest_ts: float | None = None
+        for message in messages:
+            if message.sender_id == self.client_id:
+                continue
+            if latest_ts is None or message.timestamp > latest_ts:
+                latest_ts = message.timestamp
+
+        if latest_ts is None:
+            return  # 상대가 보낸 메시지가 없으면 알릴 것도 없다.
+
+        payload = {
+            "conversation_id": conversation_id,
+            "conversation_type": conversation_type,
+            "up_to_ts": latest_ts,
+        }
+        for contact in self._resolve_targets(conversation_id, conversation_type):
+            packet = Packet(msg_type=MsgType.READ_RECEIPT, seq=0, sender_id=self.client_id, payload=payload)
+            self.socket.send_reliable(packet, contact.address)
+
+    # ------------------------------------------------------------------
     # 텍스트 전송
     # ------------------------------------------------------------------
     def send_text(self, conversation_id: str, conversation_type: str, text: str) -> Message:
@@ -200,21 +232,95 @@ class ChatEngine(QObject):
 
         group_id = conversation_id if conversation_type == ConversationType.GROUP else None
         for contact in self._resolve_targets(conversation_id, conversation_type):
-            packet = Packet(
-                msg_type=MsgType.TEXT,
-                seq=0,
-                sender_id=self.client_id,
-                payload={
-                    "message_id": message.id,
-                    "conversation_type": conversation_type,
-                    "group_id": group_id,
-                    "text": text,
-                    "timestamp": message.timestamp,
-                },
-            )
-            self.socket.send_reliable(packet, contact.address)
+            payload = {
+                "message_id": message.id,
+                "conversation_type": conversation_type,
+                "group_id": group_id,
+                "text": text,
+                "timestamp": message.timestamp,
+            }
+            packet = Packet(msg_type=MsgType.TEXT, seq=0, sender_id=self.client_id, payload=payload)
+
+            def _on_fail(contact_id=contact.id, message_id=message.id, payload=payload) -> None:
+                # 상대가 오프라인이라 MAX_RETRIES 소진 -> 재전송 대기열에 넣는다.
+                self.storage.mark_message_status(message_id, "pending")
+                self._queue_pending_retry(contact_id, message_id, payload)
+
+            self.socket.send_reliable(packet, contact.address, on_fail=_on_fail)
 
         return message
+
+    # ------------------------------------------------------------------
+    # 오프라인 재전송 큐 (TEXT 메시지 전용)
+    # ------------------------------------------------------------------
+    def _queue_pending_retry(self, contact_id: str, message_id: str, payload: dict) -> None:
+        """재전송이 필요한 (contact, message) 쌍을 대기열에 기록한다 (중복 방지)."""
+        entries = self._pending_retry.setdefault(contact_id, [])
+        if any(e["message_id"] == message_id for e in entries):
+            return
+        entries.append({"message_id": message_id, "payload": payload})
+
+    def _remove_pending_retry(self, contact_id: str, message_id: str) -> None:
+        entries = self._pending_retry.get(contact_id)
+        if not entries:
+            return
+        remaining = [e for e in entries if e["message_id"] != message_id]
+        if remaining:
+            self._pending_retry[contact_id] = remaining
+        else:
+            self._pending_retry.pop(contact_id, None)
+
+    def _restore_pending_retry(self) -> None:
+        """재시작 후에도 대기열이 유지되도록, storage에서 pending 상태의
+        (내가 보낸) TEXT 메시지를 읽어와 ``_pending_retry``를 재구성한다."""
+        for message in self.storage.get_all_pending_messages():
+            if message.sender_id != self._client_id or message.type != MessageType.TEXT:
+                continue
+
+            if message.conversation_type == ConversationType.GROUP:
+                group = self._groups.get(message.conversation_id)
+                if not group:
+                    continue
+                contact_ids = [mid for mid in group.member_ids if mid != self._client_id]
+                group_id = message.conversation_id
+            else:
+                contact_ids = [message.conversation_id]
+                group_id = None
+
+            payload = {
+                "message_id": message.id,
+                "conversation_type": message.conversation_type,
+                "group_id": group_id,
+                "text": message.text,
+                "timestamp": message.timestamp,
+            }
+            for contact_id in contact_ids:
+                self._queue_pending_retry(contact_id, message.id, payload)
+
+    def _retry_pending_for_contact(self, contact_id: str) -> None:
+        """해당 연락처가 온라인으로 전환됐을 때 대기 중인 메시지를 재전송한다."""
+        entries = self._pending_retry.get(contact_id)
+        if not entries:
+            return
+        contact = self.peer_manager.get_contact(contact_id)
+        if contact is None:
+            return
+
+        for entry in list(entries):
+            message_id = entry["message_id"]
+            payload = entry["payload"]
+            packet = Packet(msg_type=MsgType.TEXT, seq=0, sender_id=self.client_id, payload=payload)
+
+            def _on_ack(contact_id=contact_id, message_id=message_id) -> None:
+                self.storage.mark_message_status(message_id, "sent")
+                self._remove_pending_retry(contact_id, message_id)
+
+            def _on_fail(contact_id=contact_id, message_id=message_id, payload=payload) -> None:
+                # 다시 실패하면 큐에 그대로 남겨두고 다음 온라인 전환을 기다린다.
+                self.storage.mark_message_status(message_id, "pending")
+                self._queue_pending_retry(contact_id, message_id, payload)
+
+            self.socket.send_reliable(packet, contact.address, on_ack=_on_ack, on_fail=_on_fail)
 
     # ------------------------------------------------------------------
     # 파일 전송
@@ -370,6 +476,9 @@ class ChatEngine(QObject):
         if now_online != was_online:
             self._online_state[contact_id] = now_online
             self.contact_status_changed.emit(contact_id, now_online)
+            if now_online:
+                # 오프라인 -> 온라인 전환: 대기 중인 재전송 메시지가 있으면 다시 시도한다.
+                self._retry_pending_for_contact(contact_id)
 
     # ------------------------------------------------------------------
     # 수신 패킷 처리
@@ -381,6 +490,7 @@ class ChatEngine(QObject):
             MsgType.GROUP_INVITE: self._handle_group_invite,
             MsgType.FILE_META: self._handle_file_meta,
             MsgType.FILE_CHUNK: self._handle_file_chunk,
+            MsgType.READ_RECEIPT: self._handle_read_receipt,
         }.get(packet.msg_type)
         if handler:
             handler(packet, addr)
@@ -416,6 +526,38 @@ class ChatEngine(QObject):
         )
         self.storage.add_message(message)
         self.message_received.emit(message)
+
+    def _handle_read_receipt(self, packet: Packet, addr: tuple[str, int]) -> None:
+        payload = packet.payload or {}
+        up_to_ts = payload.get("up_to_ts")
+        if up_to_ts is None:
+            return
+
+        conversation_type = payload.get("conversation_type", ConversationType.DIRECT)
+        if conversation_type == ConversationType.GROUP:
+            # 그룹은 group_id가 양쪽 모두 동일한 전역 식별자이므로 그대로 사용한다.
+            conversation_id = payload.get("conversation_id")
+        else:
+            # 1:1 대화의 conversation_id는 상대측 로컬 contact.id라 내 쪽과
+            # 값이 다를 수 있다 (_handle_text와 동일하게 발신자 기준으로
+            # 내 로컬 contact.id를 다시 계산해야 한다).
+            conversation_id = self._resolve_contact(packet.sender_id, addr[0], addr[1])
+        if conversation_id is None:
+            return
+
+        now = time.time()
+        updated = False
+        for message in self.storage.get_messages(conversation_id):
+            if (
+                message.sender_id == self.client_id
+                and message.read_at is None
+                and message.timestamp <= up_to_ts
+            ):
+                self.storage.mark_message_read(message.id, now)
+                updated = True
+
+        if updated:
+            self.messages_read_up_to.emit(conversation_id, up_to_ts)
 
     def _handle_group_invite(self, packet: Packet, addr: tuple[str, int]) -> None:
         payload = packet.payload

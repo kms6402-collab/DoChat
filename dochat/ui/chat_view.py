@@ -1,6 +1,8 @@
 """스크롤 가능한 메시지 버블 리스트 + 드래그앤드롭 파일 전송."""
 from __future__ import annotations
 
+import time
+
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QLabel,
@@ -29,6 +31,7 @@ class ChatView(QWidget):
         self.my_id: str | None = None
 
         self._bubbles_by_file_id: dict[str, MessageBubble] = {}
+        self._bubbles_by_message_id: dict[str, MessageBubble] = {}
         self._bubbles: list[MessageBubble] = []
         self._contact_name_cache: dict[str, str] = {}
 
@@ -62,6 +65,7 @@ class ChatView(QWidget):
     def _clear_bubbles(self) -> None:
         """추가된 메시지 버블만 제거한다 (``_empty_label``/stretch는 건드리지 않음)."""
         self._bubbles_by_file_id.clear()
+        self._bubbles_by_message_id.clear()
         for bubble in self._bubbles:
             self._viewport_layout.removeWidget(bubble)
             bubble.setParent(None)
@@ -98,6 +102,8 @@ class ChatView(QWidget):
         )
         if message.file_id:
             self._bubbles_by_file_id[message.file_id] = bubble
+        if message.id:
+            self._bubbles_by_message_id[message.id] = bubble
         return bubble
 
     def _append_bubble_widget(self, bubble: MessageBubble) -> None:
@@ -139,6 +145,9 @@ class ChatView(QWidget):
             self._append_bubble_widget(bubble)
 
         self._scroll_to_bottom()
+
+        # 대화를 열 때마다 상대에게 읽음 확인을 보낸다.
+        self._chat_engine.mark_conversation_read(conversation_id, conversation_type)
 
     def append_message(self, message: Message) -> None:
         """새 메시지 하나를 리스트 끝에 추가하고 자동 스크롤한다."""
@@ -191,6 +200,22 @@ class ChatView(QWidget):
         bubble = self._bubbles_by_file_id.get(file_id)
         if bubble is not None:
             bubble.mark_completed(success)
+
+    def mark_messages_read_up_to(self, conversation_id: str, up_to_ts: float) -> None:
+        """읽음 확인(READ_RECEIPT)이 도착했을 때, 현재 표시 중인 대화면 해당
+        시각 이전에 내가 보낸 메시지 버블들에 '읽음' 표시를 갱신한다."""
+        if self.conversation_id != conversation_id:
+            return
+        now = time.time()
+        for bubble in list(self._bubbles_by_message_id.values()):
+            message = bubble.message
+            if (
+                message.sender_id == self.my_id
+                and message.timestamp <= up_to_ts
+                and message.read_at is None
+            ):
+                message.read_at = now
+                bubble.update_read_status(now)
 
     # ------------------------------------------------------------------
     def dragEnterEvent(self, event) -> None:

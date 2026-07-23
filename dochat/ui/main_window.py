@@ -171,6 +171,7 @@ class MainWindow(QMainWindow):
         self.chat_engine.file_completed.connect(self._on_file_completed)
         self.chat_engine.contact_status_changed.connect(self._on_contact_status_changed)
         self.chat_engine.group_updated.connect(self._on_group_updated)
+        self.chat_engine.messages_read_up_to.connect(self._on_messages_read_up_to)
 
     # ------------------------------------------------------------------
     def _refresh_lists(self) -> None:
@@ -382,6 +383,13 @@ class MainWindow(QMainWindow):
             and self._current_conversation_id == contact_id
         ):
             self._update_header()
+
+    def _on_messages_read_up_to(self, conversation_id: str, up_to_ts: float) -> None:
+        """상대가 내 메시지를 읽었다는 확인(READ_RECEIPT)이 도착했을 때, 현재
+        열려 있는 대화면 해당 버블들에 '읽음' 표시를 갱신한다."""
+        if self._current_conversation_id != conversation_id:
+            return
+        self.chat_view.mark_messages_read_up_to(conversation_id, up_to_ts)
 
     def _on_group_updated(self, group_id: str) -> None:
         self._refresh_lists()
