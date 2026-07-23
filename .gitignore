@@ -1,0 +1,9 @@
+.venv/
+.venv_win/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+packaging/macos/DoChat.pkg
+.DS_Store

@@ -1,0 +1,398 @@
+/* DoChat - 라이트 모드 오피스 스타일시트
+   팔레트:
+     배경(메인)      #FFFFFF
+     배경(사이드바)   #F5F6F8
+     구분선/보더      #E4E6EA
+     텍스트(기본)     #2C2F36
+     텍스트(보조)     #8A8F98
+     포인트(블루)     #3B6FE0
+     포인트(호버)     #2F5BC4
+     온라인(초록)     #34C77B
+     오프라인(회색)   #B7BBC2
+*/
+
+* {
+    font-family: "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    outline: none;
+}
+
+QWidget {
+    background-color: #FFFFFF;
+    color: #2C2F36;
+    font-size: 13px;
+}
+
+QMainWindow {
+    background-color: #FFFFFF;
+}
+
+/* ---------------- 사이드바 ---------------- */
+#Sidebar {
+    background-color: #F5F6F8;
+    border-right: 1px solid #E4E6EA;
+}
+
+#SidebarHeader {
+    background-color: #F5F6F8;
+    border-bottom: 1px solid #E4E6EA;
+}
+
+#AppTitle {
+    color: #2C2F36;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+QPushButton#SidebarActionButton {
+    background-color: #FFFFFF;
+    color: #3B6FE0;
+    border: 1px solid #E4E6EA;
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-weight: 600;
+}
+
+QPushButton#SidebarActionButton:hover {
+    background-color: #EEF2FD;
+    border: 1px solid #3B6FE0;
+}
+
+QPushButton#SidebarActionButton:pressed {
+    background-color: #E3EAFB;
+}
+
+/* ---------------- 대화 목록 ---------------- */
+QListWidget#ConversationList {
+    background-color: #F5F6F8;
+    border: none;
+    padding: 4px;
+}
+
+QListWidget#ConversationList::item {
+    background-color: transparent;
+    border-radius: 8px;
+    padding: 0px;
+    margin: 2px 4px;
+}
+
+QListWidget#ConversationList::item:selected {
+    background-color: #E3EAFB;
+}
+
+QListWidget#ConversationList::item:hover:!selected {
+    background-color: #ECEDF1;
+}
+
+/* ---------------- 채팅 영역 헤더 ---------------- */
+#ChatHeader {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E4E6EA;
+}
+
+#ChatHeaderTitle {
+    font-size: 15px;
+    font-weight: 600;
+    color: #2C2F36;
+}
+
+#ChatHeaderSubtitle {
+    font-size: 12px;
+    color: #8A8F98;
+}
+
+/* ---------------- 채팅 영역 ---------------- */
+QScrollArea#ChatScrollArea {
+    background-color: #FFFFFF;
+    border: none;
+}
+
+#ChatViewport {
+    background-color: #FFFFFF;
+}
+
+#EmptyStateLabel {
+    color: #8A8F98;
+    font-size: 13px;
+}
+
+/* 말풍선 */
+#BubbleFrameMine {
+    background-color: #3B6FE0;
+    border-radius: 12px;
+}
+
+#BubbleFrameOther {
+    background-color: #F0F1F4;
+    border-radius: 12px;
+}
+
+#BubbleTextMine {
+    color: #FFFFFF;
+    background: transparent;
+}
+
+#BubbleTextOther {
+    color: #2C2F36;
+    background: transparent;
+}
+
+#BubbleMeta {
+    color: #8A8F98;
+    font-size: 11px;
+    background: transparent;
+}
+
+#BubbleMetaMine {
+    color: #DCE5FA;
+    font-size: 11px;
+    background: transparent;
+}
+
+#BubbleSender {
+    color: #3B6FE0;
+    font-size: 11px;
+    font-weight: 600;
+    background: transparent;
+}
+
+#FileCard {
+    background-color: rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+}
+
+#FileCardOther {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E6EA;
+    border-radius: 8px;
+}
+
+#FileNameLabel {
+    font-weight: 600;
+    background: transparent;
+}
+
+#FileMetaLabel {
+    color: #8A8F98;
+    font-size: 11px;
+    background: transparent;
+}
+
+/* ---------------- 입력창 영역 ---------------- */
+#ComposeBar {
+    background-color: #FFFFFF;
+    border-top: 1px solid #E4E6EA;
+}
+
+QLineEdit#ComposeInput {
+    background-color: #F5F6F8;
+    border: 1px solid #E4E6EA;
+    border-radius: 18px;
+    padding: 9px 16px;
+    font-size: 13px;
+    color: #2C2F36;
+}
+
+QLineEdit#ComposeInput:focus {
+    border: 1px solid #3B6FE0;
+    background-color: #FFFFFF;
+}
+
+QPushButton#AttachButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 16px;
+    font-size: 16px;
+    color: #8A8F98;
+    padding: 6px;
+}
+
+QPushButton#AttachButton:hover {
+    background-color: #F0F1F4;
+    color: #3B6FE0;
+}
+
+QPushButton#SendButton {
+    background-color: #3B6FE0;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 18px;
+    padding: 8px 20px;
+    font-weight: 600;
+}
+
+QPushButton#SendButton:hover {
+    background-color: #2F5BC4;
+}
+
+QPushButton#SendButton:pressed {
+    background-color: #274CA6;
+}
+
+QPushButton#SendButton:disabled {
+    background-color: #C7D2F2;
+    color: #FFFFFF;
+}
+
+/* ---------------- 공용 위젯 ---------------- */
+QPushButton {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E6EA;
+    border-radius: 8px;
+    padding: 6px 14px;
+    color: #2C2F36;
+}
+
+QPushButton:hover {
+    background-color: #F0F1F4;
+}
+
+QPushButton:pressed {
+    background-color: #E4E6EA;
+}
+
+QPushButton#PrimaryButton {
+    background-color: #3B6FE0;
+    border: none;
+    color: #FFFFFF;
+    font-weight: 600;
+}
+
+QPushButton#PrimaryButton:hover {
+    background-color: #2F5BC4;
+}
+
+QPushButton#PrimaryButton:pressed {
+    background-color: #274CA6;
+}
+
+QLineEdit, QTextEdit, QPlainTextEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E6EA;
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: #2C2F36;
+    selection-background-color: #3B6FE0;
+    selection-color: #FFFFFF;
+}
+
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
+    border: 1px solid #3B6FE0;
+}
+
+QListWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E6EA;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QListWidget::item {
+    padding: 6px 8px;
+    border-radius: 6px;
+}
+
+QListWidget::item:selected {
+    background-color: #E3EAFB;
+    color: #2C2F36;
+}
+
+QListWidget::item:hover:!selected {
+    background-color: #F0F1F4;
+}
+
+QProgressBar {
+    background-color: rgba(255, 255, 255, 0.25);
+    border: none;
+    border-radius: 5px;
+    height: 8px;
+    text-align: center;
+    color: transparent;
+}
+
+QProgressBar::chunk {
+    background-color: #FFFFFF;
+    border-radius: 5px;
+}
+
+QProgressBar#FileProgressOther {
+    background-color: #E4E6EA;
+}
+
+QProgressBar#FileProgressOther::chunk {
+    background-color: #3B6FE0;
+    border-radius: 5px;
+}
+
+QDialog {
+    background-color: #FFFFFF;
+}
+
+QLabel#DialogLabel {
+    color: #2C2F36;
+    font-weight: 600;
+}
+
+QLabel#DialogHint {
+    color: #8A8F98;
+    font-size: 11px;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 2px;
+}
+
+QScrollBar::handle:vertical {
+    background: #D3D6DC;
+    border-radius: 5px;
+    min-height: 24px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #B7BBC2;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 10px;
+    margin: 2px;
+}
+
+QScrollBar::handle:horizontal {
+    background: #D3D6DC;
+    border-radius: 5px;
+    min-width: 24px;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+
+QMenu {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E6EA;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QMenu::item {
+    padding: 6px 16px;
+    border-radius: 6px;
+}
+
+QMenu::item:selected {
+    background-color: #E3EAFB;
+}
+
+QToolTip {
+    background-color: #2C2F36;
+    color: #FFFFFF;
+    border: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+}

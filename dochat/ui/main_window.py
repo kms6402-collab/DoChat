@@ -1,0 +1,308 @@
+"""DoChat 메인 윈도우: 좌측 대화 목록 + 우측 채팅 영역."""
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from dochat import config
+from dochat.models.message import ConversationType
+from dochat.models.storage import Storage
+from dochat.network.chat_engine import ChatEngine
+from dochat.ui.add_contact_dialog import AddContactDialog
+from dochat.ui.chat_view import ChatView
+from dochat.ui.compose_bar import ComposeBar
+from dochat.ui.conversation_list import ConversationList
+from dochat.ui.file_room import FileRoomDialog
+from dochat.ui.new_group_dialog import NewGroupDialog
+
+_STYLE_PATH = Path(__file__).resolve().parent / "styles.qss"
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle(config.APP_NAME)
+        self.resize(1000, 700)
+
+        self.storage = Storage(config.DB_PATH)
+        self.chat_engine = ChatEngine(self.storage, listen_port=config.DEFAULT_LISTEN_PORT)
+
+        self._current_conversation_id: str | None = None
+        self._current_conversation_type: str | None = None
+        self._file_room: FileRoomDialog | None = None
+
+        self._build_ui()
+        self._connect_signals()
+        self._apply_stylesheet()
+
+        self._refresh_lists()
+
+    # ------------------------------------------------------------------
+    def _build_ui(self) -> None:
+        central = QWidget()
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ---------------- 좌측 사이드바 ----------------
+        sidebar = QFrame()
+        sidebar.setObjectName("Sidebar")
+        sidebar.setMinimumWidth(260)
+        sidebar.setMaximumWidth(320)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
+
+        header = QFrame()
+        header.setObjectName("SidebarHeader")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(16, 16, 16, 12)
+        header_layout.setSpacing(10)
+
+        title_label = QLabel(config.APP_NAME)
+        title_label.setObjectName("AppTitle")
+        header_layout.addWidget(title_label)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(8)
+        self._new_contact_button = QPushButton("+ 새 대화")
+        self._new_contact_button.setObjectName("SidebarActionButton")
+        self._new_group_button = QPushButton("+ 새 그룹")
+        self._new_group_button.setObjectName("SidebarActionButton")
+        button_row.addWidget(self._new_contact_button)
+        button_row.addWidget(self._new_group_button)
+        header_layout.addLayout(button_row)
+
+        self._file_room_button = QPushButton("\U0001F4C1 파일함 / 전송 히스토리")
+        self._file_room_button.setObjectName("SidebarActionButton")
+        header_layout.addWidget(self._file_room_button)
+
+        sidebar_layout.addWidget(header)
+
+        self.conversation_list = ConversationList()
+        sidebar_layout.addWidget(self.conversation_list, 1)
+
+        root.addWidget(sidebar)
+
+        # ---------------- 우측 채팅 영역 ----------------
+        chat_panel = QFrame()
+        chat_layout = QVBoxLayout(chat_panel)
+        chat_layout.setContentsMargins(0, 0, 0, 0)
+        chat_layout.setSpacing(0)
+
+        chat_header = QFrame()
+        chat_header.setObjectName("ChatHeader")
+        chat_header.setFixedHeight(60)
+        chat_header_layout = QVBoxLayout(chat_header)
+        chat_header_layout.setContentsMargins(20, 8, 20, 8)
+        chat_header_layout.setSpacing(2)
+        chat_header_layout.setAlignment(Qt.AlignVCenter)
+
+        self._header_title = QLabel("대화를 선택해 주세요")
+        self._header_title.setObjectName("ChatHeaderTitle")
+        self._header_subtitle = QLabel("")
+        self._header_subtitle.setObjectName("ChatHeaderSubtitle")
+        chat_header_layout.addWidget(self._header_title)
+        chat_header_layout.addWidget(self._header_subtitle)
+
+        chat_layout.addWidget(chat_header)
+
+        self.chat_view = ChatView(self.chat_engine, self.storage)
+        chat_layout.addWidget(self.chat_view, 1)
+
+        self.compose_bar = ComposeBar()
+        chat_layout.addWidget(self.compose_bar)
+
+        root.addWidget(chat_panel, 1)
+
+        self.setCentralWidget(central)
+
+    def _apply_stylesheet(self) -> None:
+        if _STYLE_PATH.exists():
+            self.setStyleSheet(_STYLE_PATH.read_text(encoding="utf-8"))
+
+    def _connect_signals(self) -> None:
+        self._new_contact_button.clicked.connect(self._on_new_contact_clicked)
+        self._new_group_button.clicked.connect(self._on_new_group_clicked)
+        self._file_room_button.clicked.connect(self._on_file_room_clicked)
+
+        self.conversation_list.conversation_selected.connect(self._on_conversation_selected)
+
+        self.compose_bar.text_submitted.connect(self._on_text_submitted)
+        self.compose_bar.file_selected.connect(self._on_file_to_send)
+        self.chat_view.file_dropped.connect(self._on_file_to_send)
+
+        self.chat_engine.message_received.connect(self._on_message_received)
+        self.chat_engine.file_progress.connect(self._on_file_progress)
+        self.chat_engine.file_completed.connect(self._on_file_completed)
+        self.chat_engine.contact_status_changed.connect(self._on_contact_status_changed)
+        self.chat_engine.group_updated.connect(self._on_group_updated)
+
+    # ------------------------------------------------------------------
+    def _refresh_lists(self) -> None:
+        contacts = self.chat_engine.get_contacts()
+        groups = self.chat_engine.get_groups()
+        self.conversation_list.refresh(contacts, groups, self.storage)
+
+    def _find_group_name(self, group_id: str) -> str:
+        for group in self.chat_engine.get_groups():
+            if group.id == group_id:
+                return group.name
+        return group_id
+
+    def _update_header(self) -> None:
+        if self._current_conversation_id is None:
+            self._header_title.setText("대화를 선택해 주세요")
+            self._header_subtitle.setText("")
+            return
+
+        if self._current_conversation_type == ConversationType.DIRECT:
+            contact = self.chat_engine.get_contact(self._current_conversation_id)
+            name = contact.nickname if contact else self._current_conversation_id
+            online = bool(contact and contact.online)
+            self._header_title.setText(name)
+            self._header_subtitle.setText("온라인" if online else "오프라인")
+        else:
+            name = self._find_group_name(self._current_conversation_id)
+            self._header_title.setText(name)
+            self._header_subtitle.setText("그룹 대화")
+
+    # ------------------------------------------------------------------
+    # UI 이벤트 핸들러
+    # ------------------------------------------------------------------
+    def _on_new_contact_clicked(self) -> None:
+        values = AddContactDialog.get_contact_info(self)
+        if not values:
+            return
+        nickname, ip, port = values
+        self.chat_engine.add_contact(nickname, ip, port)
+        self._refresh_lists()
+
+    def _on_new_group_clicked(self) -> None:
+        contacts = self.chat_engine.get_contacts()
+        if not contacts:
+            QMessageBox.information(self, "알림", "먼저 대화 상대를 추가해 주세요.")
+            return
+        values = NewGroupDialog.get_values(self, contacts)
+        if not values:
+            return
+        name, member_ids = values
+        self.chat_engine.create_group(name, member_ids)
+        self._refresh_lists()
+
+    def _on_file_room_clicked(self) -> None:
+        if self._file_room is None:
+            self._file_room = FileRoomDialog(self.chat_engine, self.storage, parent=self)
+            self._file_room.finished.connect(self._on_file_room_closed)
+        else:
+            self._file_room.refresh()
+        self._file_room.show()
+        self._file_room.raise_()
+        self._file_room.activateWindow()
+
+    def _on_file_room_closed(self) -> None:
+        self._file_room = None
+
+    def _on_conversation_selected(self, conversation_id: str, conversation_type: str) -> None:
+        self._current_conversation_id = conversation_id
+        self._current_conversation_type = conversation_type
+        self.chat_view.set_conversation(conversation_id, conversation_type, self.chat_engine.client_id)
+        self.compose_bar.set_active(True)
+        self._update_header()
+
+    def _on_text_submitted(self, text: str) -> None:
+        if self._current_conversation_id is None:
+            return
+        message = self.chat_engine.send_text(
+            self._current_conversation_id, self._current_conversation_type, text
+        )
+        self.chat_view.append_message(message)
+        self.conversation_list.update_preview(
+            self._current_conversation_id, self._current_conversation_type, self.storage
+        )
+
+    def _on_file_to_send(self, file_path: str) -> None:
+        if self._current_conversation_id is None:
+            QMessageBox.information(self, "알림", "먼저 대화를 선택해 주세요.")
+            return
+        # send_file()은 FileRecord만 즉시 저장하고 Message는 전송 완료 시점에
+        # 저장되므로, 진행 중 버블은 file_progress 시그널에서 즉석 생성된다
+        # (ChatView.ensure_file_bubble 참고).
+        self.chat_engine.send_file(
+            self._current_conversation_id, self._current_conversation_type, file_path
+        )
+
+    # ------------------------------------------------------------------
+    # ChatEngine 시그널 핸들러
+    # ------------------------------------------------------------------
+    def _on_message_received(self, message) -> None:
+        if (
+            self._current_conversation_id == message.conversation_id
+            and self._current_conversation_type == message.conversation_type
+        ):
+            self.chat_view.append_message(message)
+        self.conversation_list.update_preview(
+            message.conversation_id, message.conversation_type, self.storage
+        )
+
+    def _on_file_progress(self, file_id: str, done: int, total: int, direction: str) -> None:
+        # message_received 없이도 진행 중인 파일을 보여주기 위해 필요하면 임시 버블을 생성한다.
+        self.chat_view.ensure_file_bubble(file_id)
+        self.chat_view.update_file_progress(file_id, done, total)
+        if self._file_room is not None:
+            self._file_room.refresh()
+
+    def _on_file_completed(self, file_id: str, success: bool) -> None:
+        record = self.storage.get_file_record(file_id)
+        conversation_id = record.conversation_id if record else None
+
+        if conversation_id is not None and conversation_id == self._current_conversation_id:
+            # 완료 시점에 실제 Message가 storage에 저장되므로 현재 대화를 다시 로드해
+            # 임시 버블을 최종 상태(썸네일/파일카드)로 교체한다.
+            self.chat_view.set_conversation(
+                self._current_conversation_id,
+                self._current_conversation_type,
+                self.chat_engine.client_id,
+            )
+        else:
+            self.chat_view.mark_file_completed(file_id, success)
+
+        if self._file_room is not None:
+            self._file_room.refresh()
+
+        self._refresh_lists()
+
+    def _on_contact_status_changed(self, contact_id: str, online: bool) -> None:
+        self.conversation_list.update_presence(contact_id, online)
+        if (
+            self._current_conversation_type == ConversationType.DIRECT
+            and self._current_conversation_id == contact_id
+        ):
+            self._update_header()
+
+    def _on_group_updated(self, group_id: str) -> None:
+        self._refresh_lists()
+        if (
+            self._current_conversation_type == ConversationType.GROUP
+            and self._current_conversation_id == group_id
+        ):
+            self._update_header()
+
+    # ------------------------------------------------------------------
+    def closeEvent(self, event) -> None:
+        try:
+            self.storage.close()
+        except Exception:
+            pass
+        super().closeEvent(event)
