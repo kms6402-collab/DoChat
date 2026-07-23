@@ -245,6 +245,7 @@ class MainWindow(QMainWindow):
         self.chat_engine.contact_status_changed.connect(self._on_contact_status_changed)
         self.chat_engine.group_updated.connect(self._on_group_updated)
         self.chat_engine.messages_read_up_to.connect(self._on_messages_read_up_to)
+        self.chat_engine.contact_added.connect(self._on_contact_added_by_peer)
 
     # ------------------------------------------------------------------
     def _refresh_lists(self) -> None:
@@ -283,8 +284,10 @@ class MainWindow(QMainWindow):
         if not values:
             return
         nickname, ip, port = values
-        self.chat_engine.add_contact(nickname, ip, port)
+        contact = self.chat_engine.add_contact(nickname, ip, port)
         self._refresh_lists()
+        self.conversation_list.select_conversation(contact.id, ConversationType.DIRECT)
+        self._on_conversation_selected(contact.id, ConversationType.DIRECT)
 
     def _on_new_group_clicked(self) -> None:
         contacts = self.chat_engine.get_contacts()
@@ -511,6 +514,13 @@ class MainWindow(QMainWindow):
             and self._current_conversation_id == group_id
         ):
             self._update_header()
+
+    def _on_contact_added_by_peer(self, contact_id: str) -> None:
+        """상대방이 나를 연락처로 추가했다는 HELLO를 받았을 때, 내 목록에도
+        해당 연락처를 반영하고 그 대화를 자동으로 연다."""
+        self._refresh_lists()
+        self.conversation_list.select_conversation(contact_id, ConversationType.DIRECT)
+        self._on_conversation_selected(contact_id, ConversationType.DIRECT)
 
     # ------------------------------------------------------------------
     def closeEvent(self, event) -> None:

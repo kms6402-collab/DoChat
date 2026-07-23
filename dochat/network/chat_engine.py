@@ -44,6 +44,7 @@ class ChatEngine(QObject):
     contact_status_changed = Signal(str, bool)  # contact_id, online
     group_updated = Signal(str)                 # group_id
     messages_read_up_to = Signal(str, float)    # conversation_id, up_to_ts (읽음 확인 도착)
+    contact_added = Signal(str)                 # contact_id (상대가 나를 연락처로 추가했음을 HELLO로 알려옴)
 
     def __init__(self, storage: Storage, listen_port: int = DEFAULT_LISTEN_PORT, parent=None):
         super().__init__(parent)
@@ -129,7 +130,20 @@ class ChatEngine(QObject):
             return "사용자"
 
     def add_contact(self, nickname: str, ip: str, port: int) -> Contact:
-        return self.peer_manager.add_contact(nickname, ip, port)
+        contact = self.peer_manager.add_contact(nickname, ip, port)
+
+        # 방금 추가한 상대에게 나를 알린다 (HELLO). 상대는 이를 받아 나를
+        # 자신의 연락처로 자동 등록하고, 그 사실을 contact_added 시그널로
+        # UI에 알려 대화가 자동으로 열리도록 한다 (main_window 참고).
+        packet = Packet(
+            msg_type=MsgType.HELLO,
+            seq=0,
+            sender_id=self.client_id,
+            payload={"nickname": self.my_nickname},
+        )
+        self.socket.send_reliable(packet, contact.address)
+
+        return contact
 
     def get_contacts(self) -> list[Contact]:
         return self.peer_manager.all_contacts()
@@ -576,6 +590,7 @@ class ChatEngine(QObject):
         handler = {
             MsgType.TEXT: self._handle_text,
             MsgType.PRESENCE: self._handle_presence,
+            MsgType.HELLO: self._handle_hello,
             MsgType.GROUP_INVITE: self._handle_group_invite,
             MsgType.GROUP_MEMBER_UPDATE: self._handle_group_member_update,
             MsgType.FILE_META: self._handle_file_meta,
@@ -590,6 +605,15 @@ class ChatEngine(QObject):
         contact_id = self._resolve_contact(packet.sender_id, addr[0], addr[1], nickname=nickname)
         self.peer_manager.mark_online(contact_id)
         self._update_online_state(contact_id)
+
+    def _handle_hello(self, packet: Packet, addr: tuple[str, int]) -> None:
+        """상대가 나를 연락처로 추가하며 보낸 HELLO. 나도 상대를 로컬 연락처로
+        자동 등록하고, UI가 해당 대화를 자동으로 열 수 있도록 알린다."""
+        nickname = (packet.payload or {}).get("nickname")
+        contact_id = self._resolve_contact(packet.sender_id, addr[0], addr[1], nickname=nickname)
+        self.peer_manager.mark_online(contact_id)
+        self._update_online_state(contact_id)
+        self.contact_added.emit(contact_id)
 
     def _handle_text(self, packet: Packet, addr: tuple[str, int]) -> None:
         payload = packet.payload

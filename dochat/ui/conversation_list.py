@@ -213,6 +213,18 @@ class ConversationList(QWidget):
             elif chosen is leave_action:
                 self.delete_group_requested.emit(conversation_id)
 
+    def select_conversation(self, conversation_id: str, conversation_type: str) -> None:
+        """해당 대화 항목을 시각적으로만 선택 상태로 맞춘다 (시그널 emit 없음).
+
+        실제 대화 전환 로직은 호출 측(MainWindow)이 별도로 처리한다. 항목이
+        아직 목록에 없으면(막 추가되어 refresh 전이라면) 아무 것도 하지 않는다.
+        """
+        key = (conversation_id, conversation_type)
+        item = self._items.get(key)
+        if item is None:
+            return
+        self._list.setCurrentItem(item)
+
     def current_selection(self) -> tuple[str, str] | None:
         item = self._list.currentItem()
         if item is None:
