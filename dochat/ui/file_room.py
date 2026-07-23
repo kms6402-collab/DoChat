@@ -34,6 +34,7 @@ _STATUS_LABEL = {
     FileStatus.RECEIVING: "수신 중",
     FileStatus.COMPLETED: "완료",
     FileStatus.FAILED: "실패",
+    FileStatus.CANCELLED: "취소됨",
 }
 _DIRECTION_LABEL = {"out": "보냄", "in": "받음"}
 

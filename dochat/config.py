@@ -45,8 +45,19 @@ else:
 ACK_TIMEOUT_SEC = 1.0
 MAX_RETRIES = 5
 
-# 파일 전송 청크 크기 (LAN MTU 1500 고려, base64/JSON 오버헤드 감안한 여유값)
-FILE_CHUNK_SIZE = 1200
+# 파일 전송 청크 크기(원본 바이트, base64/JSON/암호화 이전 기준).
+# 청크 개수를 줄여 청크당 왕복 오버헤드(ACK 대기, 오브젝트 생성 비용)를 줄이되,
+# 실제 전송되는 UDP 데이터그램 크기(base64 인코딩 + JSON 포장 + Fernet 암호화로
+# 원본의 약 1.9배까지 부풀어 오름)가 OS의 단일 UDP 데이터그램 상한을 넘지 않도록
+# 여유 있게 잡는다. 예) macOS는 기본적으로 net.inet.udp.maxdgram=9216바이트로 이보다
+# 큰 데이터그램은 조용히 전송에 실패한다(재시도도 항상 실패해 전송이 멈춘다) —
+# 실측(sysctl net.inet.udp.maxdgram, 실제 암호화 후 바이트 수 측정)으로 확인됨.
+# FILE_CHUNK_SIZE=4096일 때 실제 전송 바이트는 약 7.7KB로 안전 마진을 확보한다.
+FILE_CHUNK_SIZE = 4096
+
+# 파일 전송 시 ACK를 기다리지 않고 동시에 "발송됨" 상태로 둘 수 있는 최대 청크 수
+# (파이프라이닝 윈도우 크기). 클수록 처리량이 늘지만 재전송 시 낭비되는 대역폭도 커진다.
+FILE_WINDOW_SIZE = 8
 
 # 프레즌스(온라인 상태) 하트비트 주기
 PRESENCE_INTERVAL_SEC = 5.0

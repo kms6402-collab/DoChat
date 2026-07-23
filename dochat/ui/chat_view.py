@@ -99,6 +99,7 @@ class ChatView(QWidget):
             sender_name=sender_name,
             show_sender=show_sender,
             file_record=file_record,
+            on_cancel_requested=self._on_cancel_requested,
         )
         if message.file_id:
             self._bubbles_by_file_id[message.file_id] = bubble
@@ -200,6 +201,18 @@ class ChatView(QWidget):
         bubble = self._bubbles_by_file_id.get(file_id)
         if bubble is not None:
             bubble.mark_completed(success)
+
+    def mark_file_cancelled(self, file_id: str) -> None:
+        """해당 file_id의 버블을 찾아 취소 상태로 갱신한다."""
+        bubble = self._bubbles_by_file_id.get(file_id)
+        if bubble is not None:
+            bubble.mark_cancelled()
+
+    def _on_cancel_requested(self, file_id: str, direction: str) -> None:
+        if direction == "out":
+            self._chat_engine.cancel_outgoing_file(file_id)
+        elif direction == "in":
+            self._chat_engine.cancel_incoming_file(file_id)
 
     def mark_messages_read_up_to(self, conversation_id: str, up_to_ts: float) -> None:
         """읽음 확인(READ_RECEIPT)이 도착했을 때, 현재 표시 중인 대화면 해당

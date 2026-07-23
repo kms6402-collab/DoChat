@@ -18,6 +18,7 @@ from dochat.config import (
     DEFAULT_LISTEN_PORT,
     DEFAULT_NETWORK_KEY,
     FILE_CHUNK_SIZE,
+    FILE_WINDOW_SIZE,
     PRESENCE_INTERVAL_SEC,
 )
 from dochat.models.contact import Contact, Group
@@ -41,6 +42,7 @@ class ChatEngine(QObject):
     message_received = Signal(object)          # Message 인스턴스 (storage 저장 완료 상태)
     file_progress = Signal(str, int, int, str)  # file_id, done_chunks, total_chunks, direction("in"|"out")
     file_completed = Signal(str, bool)          # file_id, success
+    file_cancelled = Signal(str, str)           # file_id, direction("in"|"out")
     contact_status_changed = Signal(str, bool)  # contact_id, online
     group_updated = Signal(str)                 # group_id
     messages_read_up_to = Signal(str, float)    # conversation_id, up_to_ts (읽음 확인 도착)
@@ -72,6 +74,7 @@ class ChatEngine(QObject):
         self._outgoing: dict[tuple[str, str], dict] = {}          # (file_id, contact_id) -> session
         self._incoming: dict[str, IncomingFileTransfer] = {}      # file_id -> transfer
         self._incoming_conv_type: dict[str, str] = {}             # file_id -> conversation_type
+        self._incoming_sender_addr: dict[str, tuple[str, int]] = {}  # file_id -> 발신자 주소 (취소 통지용)
 
         self.socket = ReliableUDPSocket(
             client_id=self._client_id,
@@ -462,6 +465,7 @@ class ChatEngine(QObject):
                 "contact": contact,
                 "conversation_id": conversation_id,
                 "conversation_type": conversation_type,
+                "pending_seqs": set(),  # 아직 ACK를 못 받은 send_reliable() 발급 seq들 (취소 시 정리용)
             }
             self._outgoing[(file_id, contact.id)] = session
             self._send_file_meta(session)
@@ -484,18 +488,22 @@ class ChatEngine(QObject):
         self.socket.send_reliable(
             packet,
             session["contact"].address,
-            on_ack=lambda: self._send_next_chunk(session),
+            on_ack=lambda: self._pump_send_window(session),
             on_fail=lambda: self._finish_outgoing(session, False),
         )
 
-    def _send_next_chunk(self, session: dict) -> None:
+    def _pump_send_window(self, session: dict) -> None:
+        """윈도우(파이프라인)에 빈 자리가 있는 만큼 새 청크를 발송한다."""
         transfer: OutgoingFileTransfer = session["transfer"]
-        nxt = transfer.peek_next()
-        if nxt is None:
-            self._finish_outgoing(session, True)
-            return
+        while len(transfer.in_flight) < FILE_WINDOW_SIZE:
+            nxt = transfer.dispatch_next()
+            if nxt is None:
+                break
+            index, data = nxt
+            self._send_one_chunk(session, index, data)
 
-        index, data = nxt
+    def _send_one_chunk(self, session: dict, index: int, data: bytes) -> None:
+        transfer: OutgoingFileTransfer = session["transfer"]
         offset = index * FILE_CHUNK_SIZE
         payload = {
             "file_id": transfer.file_id,
@@ -508,21 +516,32 @@ class ChatEngine(QObject):
         packet = Packet(msg_type=MsgType.FILE_CHUNK, seq=0, sender_id=self.client_id, payload=payload)
 
         def _on_ack() -> None:
-            transfer.advance()
-            self.file_progress.emit(transfer.file_id, transfer.done_chunks, transfer.total_chunks, "out")
-            self._send_next_chunk(session)
+            transfer.mark_acked(index)
+            session["pending_seqs"].discard(seq)
+            self.file_progress.emit(transfer.file_id, transfer.acked_count, transfer.total_chunks, "out")
+            if transfer.is_fully_acked:
+                self._finish_outgoing(session, True)
+            else:
+                self._pump_send_window(session)  # 창에 빈 자리가 생겼으니 다음 청크를 채운다
 
         def _on_fail() -> None:
             self._finish_outgoing(session, False)
 
-        self.socket.send_reliable(packet, session["contact"].address, on_ack=_on_ack, on_fail=_on_fail)
+        seq = self.socket.send_reliable(packet, session["contact"].address, on_ack=_on_ack, on_fail=_on_fail)
+        session["pending_seqs"].add(seq)
 
     def _finish_outgoing(self, session: dict, success: bool) -> None:
         transfer: OutgoingFileTransfer = session["transfer"]
         contact: Contact = session["contact"]
         file_id = transfer.file_id
+        key = (file_id, contact.id)
 
-        self._outgoing.pop((file_id, contact.id), None)
+        if key not in self._outgoing:
+            # 파이프라이닝 중 동시에 여러 in-flight 청크가 실패하거나, 이미
+            # 취소/완료 처리된 세션에 대해 뒤늦게 콜백이 들어온 경우 -> 중복 처리 방지.
+            return
+
+        self._outgoing.pop(key, None)
         self.storage.update_file_status(file_id, FileStatus.COMPLETED if success else FileStatus.FAILED)
 
         if success:
@@ -580,6 +599,7 @@ class ChatEngine(QObject):
             MsgType.GROUP_MEMBER_UPDATE: self._handle_group_member_update,
             MsgType.FILE_META: self._handle_file_meta,
             MsgType.FILE_CHUNK: self._handle_file_chunk,
+            MsgType.FILE_CANCEL: self._handle_file_cancel,
             MsgType.READ_RECEIPT: self._handle_read_receipt,
         }.get(packet.msg_type)
         if handler:
@@ -757,6 +777,7 @@ class ChatEngine(QObject):
         )
         self._incoming[file_id] = transfer
         self._incoming_conv_type[file_id] = conversation_type
+        self._incoming_sender_addr[file_id] = addr  # 취소 통지를 보낼 때 필요
 
         record = FileRecord(
             file_id=file_id,
@@ -792,6 +813,7 @@ class ChatEngine(QObject):
             final_path = transfer.finalize()
             conversation_type = self._incoming_conv_type.pop(file_id, ConversationType.DIRECT)
             self._incoming.pop(file_id, None)
+            self._incoming_sender_addr.pop(file_id, None)
 
             record = self.storage.get_file_record(file_id)
             if record is not None:
@@ -810,6 +832,81 @@ class ChatEngine(QObject):
             )
             self.storage.add_message(message)
             self.file_completed.emit(file_id, True)
+
+    def _handle_file_cancel(self, packet: Packet, addr: tuple[str, int]) -> None:
+        """상대가 FILE_CANCEL을 보내온 경우(자기 쪽 취소)를 로컬에 반영한다.
+
+        상대가 이미 취소를 결정했으므로, 무한루프 방지를 위해 여기서는
+        다시 FILE_CANCEL을 돌려보내지 않고 로컬 정리만 수행한다.
+        """
+        file_id = (packet.payload or {}).get("file_id")
+        if not file_id:
+            return
+
+        # 내가 보내는 중이던 파일 -> 상대가 수신을 취소한 경우
+        for key in [k for k in self._outgoing if k[0] == file_id]:
+            session = self._outgoing.pop(key, None)
+            if session is None:
+                continue
+            for seq in session.get("pending_seqs", set()):
+                self.socket.cancel(seq)
+            self.storage.update_file_status(file_id, FileStatus.CANCELLED)
+            self.file_cancelled.emit(file_id, "out")
+
+        # 내가 받는 중이던 파일 -> 상대가 발신을 취소한 경우
+        transfer = self._incoming.pop(file_id, None)
+        if transfer is not None:
+            transfer.abort()
+            self._incoming_conv_type.pop(file_id, None)
+            self._incoming_sender_addr.pop(file_id, None)
+            self.storage.update_file_status(file_id, FileStatus.CANCELLED)
+            self.file_cancelled.emit(file_id, "in")
+
+    def cancel_outgoing_file(self, file_id: str) -> None:
+        """내가 보내는 중인 파일 전송을 취소한다 (그룹이면 대상 전원에 대해)."""
+        keys = [k for k in self._outgoing if k[0] == file_id]
+        if not keys:
+            return
+
+        for key in keys:
+            session = self._outgoing.pop(key, None)
+            if session is None:
+                continue
+            contact: Contact = session["contact"]
+            for seq in session.get("pending_seqs", set()):
+                self.socket.cancel(seq)
+            packet = Packet(
+                msg_type=MsgType.FILE_CANCEL,
+                seq=0,
+                sender_id=self.client_id,
+                payload={"file_id": file_id},
+            )
+            self.socket.send_reliable(packet, contact.address)
+
+        self.storage.update_file_status(file_id, FileStatus.CANCELLED)
+        self.file_cancelled.emit(file_id, "out")
+
+    def cancel_incoming_file(self, file_id: str) -> None:
+        """내가 받는 중인 파일 전송을 취소한다 (임시 파일 정리 + 상대에게 통지)."""
+        transfer = self._incoming.pop(file_id, None)
+        if transfer is None:
+            return
+
+        transfer.abort()
+        self._incoming_conv_type.pop(file_id, None)
+        sender_addr = self._incoming_sender_addr.pop(file_id, None)
+
+        if sender_addr is not None:
+            packet = Packet(
+                msg_type=MsgType.FILE_CANCEL,
+                seq=0,
+                sender_id=self.client_id,
+                payload={"file_id": file_id},
+            )
+            self.socket.send_reliable(packet, sender_addr)
+
+        self.storage.update_file_status(file_id, FileStatus.CANCELLED)
+        self.file_cancelled.emit(file_id, "in")
 
     # ------------------------------------------------------------------
     # 연락처 식별 (원격 CLIENT_ID/주소 <-> 로컬 Contact.id)
