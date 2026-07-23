@@ -105,6 +105,20 @@ class SettingsDialog(QDialog):
         port_hint.setObjectName("DialogHint")
         form.addRow("", port_hint)
 
+        # --- 보안 키(암호화) -----------------------------------------------
+        self._network_key_edit = QLineEdit(storage.get_setting("network_key", "") or "")
+        self._network_key_edit.setEchoMode(QLineEdit.Password)
+        self._network_key_edit.setPlaceholderText("기본 키 사용")
+        form.addRow("보안 키(암호화)", self._network_key_edit)
+
+        network_key_hint = QLabel(
+            "모든 참가자가 동일한 키를 입력해야 서로 통신할 수 있습니다. "
+            "비워두면 기본 키를 사용합니다."
+        )
+        network_key_hint.setObjectName("DialogHint")
+        network_key_hint.setWordWrap(True)
+        form.addRow("", network_key_hint)
+
         # --- 알림음 -------------------------------------------------------
         self._notify_check = QCheckBox("새 메시지 도착 시 알림음")
         notify_default = storage.get_setting("notify_sound", "1") == "1"
@@ -215,5 +229,6 @@ class SettingsDialog(QDialog):
 
         self._storage.set_setting("listen_port", str(self._port_spin.value()))
         self._storage.set_setting("notify_sound", "1" if self._notify_check.isChecked() else "0")
+        self._storage.set_setting("network_key", self._network_key_edit.text())
 
         self.accept()

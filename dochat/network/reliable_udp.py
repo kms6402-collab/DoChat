@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, QTimer
 from PySide6.QtNetwork import QHostAddress, QUdpSocket
 
 from dochat.config import ACK_TIMEOUT_SEC, CLIENT_ID, MAX_RETRIES
+from dochat.network.crypto_utils import PayloadCipher
 from dochat.network.protocol import MsgType, Packet
 
 # sender_id별로 최근에 본 seq를 이만큼 기억해 중복 수신을 걸러낸다.
@@ -40,10 +41,18 @@ class ReliableUDPSocket(QObject):
     내부에서 소비되어 상위 레이어로 올라가지 않는다.
     """
 
-    def __init__(self, client_id: str = CLIENT_ID, parent: QObject | None = None):
+    def __init__(
+        self,
+        client_id: str = CLIENT_ID,
+        parent: QObject | None = None,
+        key: str | None = None,
+    ):
         super().__init__(parent)
         self._client_id = client_id
         self.socket = QUdpSocket(self)
+        # key가 주어지면 송수신 데이터그램을 페이로드 단위로 암/복호화한다.
+        # 없으면 암호화를 비활성화한다(하위 호환/테스트용).
+        self._cipher = PayloadCipher(key) if key else None
 
         # (packet, addr) -> callable(Packet, tuple[str,int]) 형태로 상위 레이어가 채워준다.
         self.on_packet_received: Optional[Callable[[Packet, tuple[str, int]], None]] = None
@@ -117,7 +126,10 @@ class ReliableUDPSocket(QObject):
         return self._seq_counter
 
     def _write(self, packet: Packet, addr: tuple[str, int]) -> None:
-        self.socket.writeDatagram(packet.encode(), QHostAddress(addr[0]), addr[1])
+        data = packet.encode()
+        if self._cipher is not None:
+            data = self._cipher.encrypt(data)
+        self.socket.writeDatagram(data, QHostAddress(addr[0]), addr[1])
 
     def _on_timeout(self, seq: int) -> None:
         entry = self._pending.get(seq)
@@ -139,8 +151,16 @@ class ReliableUDPSocket(QObject):
         while self.socket.hasPendingDatagrams():
             size = self.socket.pendingDatagramSize()
             data, host, port = self.socket.readDatagram(size)
+            raw = bytes(data)
+
+            if self._cipher is not None:
+                raw = self._cipher.decrypt(raw)
+                if raw is None:
+                    # 다른 키를 쓰는 발신자이거나 손상된 데이터 -> 조용히 무시
+                    continue
+
             try:
-                packet = Packet.decode(bytes(data))
+                packet = Packet.decode(raw)
             except Exception:
                 # 손상되었거나 알 수 없는 형식의 데이터그램은 무시
                 continue
