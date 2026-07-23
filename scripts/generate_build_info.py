@@ -29,17 +29,23 @@ def _git(*args: str) -> str | None:
 
 def main() -> None:
     commit = _git("rev-parse", "--short", "HEAD") or "unknown"
+    build_number_raw = _git("rev-list", "--count", "HEAD")
+    build_number = build_number_raw if build_number_raw and build_number_raw.isdigit() else "0"
     build_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     content = (
         '"""빌드 시점에 자동 생성되는 파일입니다. 직접 수정하지 마세요."""\n'
         f"BUILD_COMMIT = {commit!r}\n"
+        f"BUILD_NUMBER = {build_number!r}\n"
         f"BUILD_DATE = {build_date!r}\n"
     )
 
     out_path = ROOT / "dochat" / "_build_info.py"
     out_path.write_text(content, encoding="utf-8")
-    print(f"build info written: commit={commit} date={build_date} -> {out_path}")
+    print(
+        f"build info written: commit={commit} build_number={build_number} "
+        f"date={build_date} -> {out_path}"
+    )
 
 
 if __name__ == "__main__":

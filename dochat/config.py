@@ -10,16 +10,19 @@ APP_VERSION = "1.0.0"
 try:
     # 패키징 스크립트/CI가 빌드 직전에 생성하는 파일. 소스에서 바로 실행하는
     # 개발 환경에는 없을 수 있으므로 없으면 조용히 None으로 둔다.
-    from dochat._build_info import BUILD_COMMIT, BUILD_DATE
-except ImportError:
+    # (구버전 캐시된 _build_info.py에는 BUILD_NUMBER가 없을 수도 있으므로
+    # ImportError뿐 아니라 AttributeError도 함께 처리한다.)
+    from dochat._build_info import BUILD_COMMIT, BUILD_DATE, BUILD_NUMBER
+except (ImportError, AttributeError):
     BUILD_COMMIT = None
     BUILD_DATE = None
+    BUILD_NUMBER = None
 
 
 def get_version_string() -> str:
-    """빌드 커밋/날짜가 있으면 함께, 없으면 버전만 반환한다."""
+    """빌드 번호/커밋/날짜가 있으면 함께, 없으면 버전만 반환한다."""
     if BUILD_COMMIT:
-        return f"{APP_VERSION} ({BUILD_COMMIT}, {BUILD_DATE})"
+        return f"{APP_VERSION} (build {BUILD_NUMBER}, {BUILD_COMMIT}, {BUILD_DATE})"
     return APP_VERSION
 
 # 로컬 데이터/수신 파일 저장 위치
