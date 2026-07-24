@@ -154,6 +154,21 @@ class ChatEngine(QObject):
     def get_contact(self, contact_id: str) -> Contact | None:
         return self.peer_manager.get_contact(contact_id)
 
+    def get_contact_for_sender(self, sender_id: str) -> Contact | None:
+        """메시지의 ``sender_id``(발신자의 전역 CLIENT_ID)로 연락처를 찾는다.
+
+        ``Message.sender_id``에는 항상 상대의 전역 CLIENT_ID가 들어있는데
+        (내가 보낸 메시지가 아닌 이상), 로컬 연락처는 그와 다른(무작위로
+        발급된) ``Contact.id``로 저장되어 있는 경우가 대부분이다(수동으로
+        "새 대화 추가"한 경우). 단순히 ``get_contact(sender_id)``로 조회하면
+        찾지 못해 닉네임 대신 UUID 원본이 그대로 표시되는 문제가 있었다
+        (특히 그룹채팅에서 눈에 띔). ``_remote_to_local`` 매핑(수신 패킷을
+        처리할 때마다 채워짐)을 먼저 확인하고, 없으면 sender_id 자체가
+        이미 로컬 id인 경우(자동 생성된 연락처)에 대비해 그대로 폴백한다.
+        """
+        local_id = self._remote_to_local.get(sender_id, sender_id)
+        return self.peer_manager.get_contact(local_id)
+
     def update_contact(self, contact_id: str, nickname: str, ip: str, port: int) -> Contact | None:
         return self.peer_manager.update_contact(contact_id, nickname, ip, port)
 

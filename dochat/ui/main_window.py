@@ -345,6 +345,11 @@ class MainWindow(QMainWindow):
             online = bool(contact and contact.online)
             self._header_title.setText(name)
             self._header_subtitle.setText("온라인" if online else "오프라인")
+            # 사이드바 목록의 상태 점이 프레즌스 상태 전환 시그널을 놓쳤을
+            # 경우를 대비해, 대화를 열 때마다 최신 값으로 강제 동기화한다
+            # (헤더와 사이드바가 서로 다른 온라인/오프라인을 보여주는
+            # 불일치를 방지).
+            self.conversation_list.update_presence(self._current_conversation_id, online)
         else:
             name = self._find_group_name(self._current_conversation_id)
             self._header_title.setText(name)
@@ -450,7 +455,7 @@ class MainWindow(QMainWindow):
             if message.sender_id == self.chat_engine.client_id:
                 sender_name = "나"
             else:
-                contact = self.chat_engine.get_contact(message.sender_id)
+                contact = self.chat_engine.get_contact_for_sender(message.sender_id)
                 sender_name = contact.nickname if contact else message.sender_id
 
             time_str = datetime.fromtimestamp(message.timestamp).strftime("%Y-%m-%d %H:%M")
@@ -616,7 +621,7 @@ class MainWindow(QMainWindow):
         if message.sender_id == self.chat_engine.client_id:
             return
 
-        contact = self.chat_engine.get_contact(message.sender_id)
+        contact = self.chat_engine.get_contact_for_sender(message.sender_id)
         sender_name = contact.nickname if contact else message.sender_id
 
         if message.conversation_type == ConversationType.GROUP:
@@ -737,8 +742,22 @@ class MainWindow(QMainWindow):
                 self._tray_hint_shown = True
             return
 
+        # 완전 종료 경로: main.py가 트레이 최소화를 위해
+        # app.setQuitOnLastWindowClosed(False)를 설정해뒀기 때문에, 창을
+        # 닫는 것만으로는 QApplication 이벤트 루프와 프로세스가 종료되지
+        # 않는다(트레이 아이콘도 계속 남아있게 됨). 여기서 명시적으로
+        # 트레이 아이콘을 내리고 QApplication.quit()을 호출해야 한다.
+        try:
+            self.tray_icon.hide()
+        except Exception:
+            pass
+
         try:
             self.storage.close()
         except Exception:
             pass
+
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
         super().closeEvent(event)

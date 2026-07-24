@@ -79,7 +79,7 @@ class ChatView(QWidget):
             return "나"
         if sender_id in self._contact_name_cache:
             return self._contact_name_cache[sender_id]
-        contact = self._chat_engine.get_contact(sender_id)
+        contact = self._chat_engine.get_contact_for_sender(sender_id)
         name = contact.nickname if contact else sender_id
         self._contact_name_cache[sender_id] = name
         return name
