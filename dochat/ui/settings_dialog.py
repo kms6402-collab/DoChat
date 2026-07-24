@@ -281,33 +281,12 @@ class SettingsDialog(QDialog):
     # ------------------------------------------------------------------
     def _on_check_update(self) -> None:
         if not update_checker.is_git_checkout():
-            from dochat import release_checker
+            from dochat import self_updater
 
-            self._update_button.setEnabled(False)
-            self._update_button.setText("확인 중...")
-            QApplication.processEvents()
-            try:
-                result = release_checker.check_for_new_release()
-            finally:
-                self._update_button.setEnabled(True)
-                self._update_button.setText("업데이트 확인")
-
-            if result.get("error"):
-                QMessageBox.warning(self, "업데이트 확인 실패", result["error"])
-                return
-
-            if not result.get("has_update"):
-                QMessageBox.information(self, "업데이트 확인", "최신 버전입니다.")
-                return
-
-            answer = QMessageBox.question(
-                self,
-                "업데이트 확인",
-                f"새 버전이 있습니다 (최신 커밋: {result['remote_short']}).\n"
-                "GitHub 릴리스/빌드 페이지에서 최신 실행 파일을 받으시겠습니까?",
-            )
-            if answer == QMessageBox.Yes:
-                QDesktopServices.openUrl(QUrl(release_checker.releases_page_url()))
+            if self_updater.is_supported():
+                self._on_check_self_update(self_updater)
+            else:
+                self._on_check_update_via_browser()
             return
 
         self._update_button.setEnabled(False)
@@ -349,6 +328,78 @@ class SettingsDialog(QDialog):
             QMessageBox.information(self, "업데이트 완료", message)
         else:
             QMessageBox.warning(self, "업데이트 실패", message)
+
+    # ------------------------------------------------------------------
+    def _on_check_self_update(self, self_updater) -> None:
+        """Windows 단일 파일(exe) 배포본: 새 버전을 내려받아 자동으로 교체·재시작한다."""
+        self._update_button.setEnabled(False)
+        self._update_button.setText("확인 중...")
+        QApplication.processEvents()
+        try:
+            result = self_updater.check_for_self_update()
+        finally:
+            self._update_button.setEnabled(True)
+            self._update_button.setText("업데이트 확인")
+
+        if result.get("error"):
+            QMessageBox.warning(self, "업데이트 확인 실패", result["error"])
+            return
+
+        if not result.get("has_update"):
+            QMessageBox.information(self, "업데이트 확인", "최신 버전입니다.")
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "업데이트 확인",
+            f"새 버전이 있습니다 ({result['remote_tag']}).\n"
+            "지금 다운로드해서 자동으로 업데이트할까요? 완료되면 DoChat이 자동으로 재시작됩니다.",
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        self._update_button.setEnabled(False)
+        self._update_button.setText("다운로드 중...")
+        QApplication.processEvents()
+        success, message = self_updater.apply_self_update(result["download_url"])
+
+        if success:
+            QMessageBox.information(self, "업데이트", message)
+            QApplication.quit()
+        else:
+            self._update_button.setEnabled(True)
+            self._update_button.setText("업데이트 확인")
+            QMessageBox.warning(self, "업데이트 실패", message)
+
+    def _on_check_update_via_browser(self) -> None:
+        """자동 업데이트를 지원하지 않는 배포본(예: macOS .pkg): 릴리스 페이지 안내만 표시."""
+        from dochat import release_checker
+
+        self._update_button.setEnabled(False)
+        self._update_button.setText("확인 중...")
+        QApplication.processEvents()
+        try:
+            result = release_checker.check_for_new_release()
+        finally:
+            self._update_button.setEnabled(True)
+            self._update_button.setText("업데이트 확인")
+
+        if result.get("error"):
+            QMessageBox.warning(self, "업데이트 확인 실패", result["error"])
+            return
+
+        if not result.get("has_update"):
+            QMessageBox.information(self, "업데이트 확인", "최신 버전입니다.")
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "업데이트 확인",
+            f"새 버전이 있습니다 (최신 커밋: {result['remote_short']}).\n"
+            "GitHub 릴리스/빌드 페이지에서 최신 실행 파일을 받으시겠습니까?",
+        )
+        if answer == QMessageBox.Yes:
+            QDesktopServices.openUrl(QUrl(release_checker.releases_page_url()))
 
     # ------------------------------------------------------------------
     def _on_accept(self) -> None:

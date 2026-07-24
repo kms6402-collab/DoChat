@@ -35,26 +35,23 @@ jobs:
       - name: 빌드 정보 생성 (버전에 커밋/날짜 반영)
         run: python scripts\generate_build_info.py
 
-      - name: PyInstaller로 폴더(onedir) 빌드
+      - name: PyInstaller로 단일 파일(onefile) 빌드
         run: |
-          pyinstaller --windowed --name DoChat --icon assets\icon.ico --add-data "assets;assets" main.py
-
-      - name: 빌드 결과 zip 압축
-        shell: pwsh
-        run: |
-          Compress-Archive -Path dist\DoChat\* -DestinationPath dist\DoChat-windows.zip -Force
+          pyinstaller --windowed --onefile --name DoChat --icon assets\icon.ico --add-data "assets;assets" main.py
 
       - name: 빌드 아티팩트 업로드
         uses: actions/upload-artifact@v4
         with:
-          name: DoChat-windows
-          path: dist/DoChat-windows.zip
+          name: DoChat-windows-exe
+          path: dist/DoChat.exe
           if-no-files-found: error
 
       - name: GitHub Release에 첨부 (태그 푸시 시)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/DoChat-windows.zip
+          # 앱 내 자동 업데이트 기능이 릴리스 자산을 이 고정된 이름
+          # ("DoChat.exe")으로 찾으므로 파일명이 절대 바뀌면 안 된다.
+          files: dist/DoChat.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
