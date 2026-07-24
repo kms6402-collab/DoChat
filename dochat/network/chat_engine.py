@@ -10,6 +10,7 @@ import os
 import socket as _socket
 import time
 import uuid
+from typing import Callable
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -47,6 +48,9 @@ class ChatEngine(QObject):
     group_updated = Signal(str)                 # group_id
     messages_read_up_to = Signal(str, float)    # conversation_id, up_to_ts (읽음 확인 도착)
     contact_added = Signal(str)                 # contact_id (상대가 나를 연락처로 추가했음을 HELLO로 알려옴)
+    typing_indicator = Signal(str, str, str)    # conversation_id, conversation_type, contact_id
+    message_deleted = Signal(str, str)          # message_id, conversation_id
+    message_edited = Signal(str, str, str)      # message_id, conversation_id, new_text
 
     def __init__(self, storage: Storage, listen_port: int = DEFAULT_LISTEN_PORT, parent=None):
         super().__init__(parent)
@@ -191,6 +195,20 @@ class ChatEngine(QObject):
         self.storage.add_group(group)
         self._groups[group.id] = group
 
+        # 그룹 생성 시스템 메시지 (내 화면에만 표시; 다른 멤버는 GROUP_INVITE
+        # 처리 시 별도 전파 훅이 없으므로 이번 범위에서는 로컬 전용으로 둔다).
+        system_message = Message(
+            id=str(uuid.uuid4()),
+            conversation_id=group.id,
+            conversation_type=ConversationType.GROUP,
+            sender_id="",
+            type=MessageType.SYSTEM,
+            timestamp=time.time(),
+            text=f"{group.name} 그룹이 생성되었습니다",
+        )
+        self.storage.add_message(system_message)
+        self.message_received.emit(system_message)
+
         members_payload = []
         for mid in group.member_ids:
             if mid == self.client_id:
@@ -245,12 +263,34 @@ class ChatEngine(QObject):
         if group is None:
             return
 
+        previous_member_ids = set(group.member_ids)
+        newly_added_ids = [cid for cid in dict.fromkeys(contact_ids) if cid not in previous_member_ids]
+
         group.member_ids = list(dict.fromkeys(group.member_ids + contact_ids))
         self.storage.add_group(group)
 
         members_payload = self._build_members_payload(group.member_ids)
 
+        # 새로 추가된 멤버별로 "참여" 시스템 메시지를 만들어 내 화면에 반영한다.
+        joined_nicknames: list[str] = []
+        for cid in newly_added_ids:
+            contact = self.peer_manager.get_contact(cid)
+            nickname = contact.nickname if contact else cid[:8]
+            joined_nicknames.append(nickname)
+            system_message = Message(
+                id=str(uuid.uuid4()),
+                conversation_id=group.id,
+                conversation_type=ConversationType.GROUP,
+                sender_id="",
+                type=MessageType.SYSTEM,
+                timestamp=time.time(),
+                text=f"{nickname}님이 그룹에 참여했습니다",
+            )
+            self.storage.add_message(system_message)
+            self.message_received.emit(system_message)
+
         # 갱신 후 멤버 전원(나 자신 제외)에게 알린다. (새로 추가된 멤버 포함)
+        # joined_members를 함께 실어 보내 수신 측도 동일한 시스템 메시지를 만들도록 한다.
         targets_ids = [mid for mid in group.member_ids if mid != self.client_id]
         for mid in targets_ids:
             contact = self.peer_manager.get_contact(mid)
@@ -265,6 +305,7 @@ class ChatEngine(QObject):
                     "name": group.name,
                     "action": "add",
                     "members": members_payload,
+                    "joined_members": joined_nicknames,
                 },
             )
             self.socket.send_reliable(packet, contact.address)
@@ -276,13 +317,30 @@ class ChatEngine(QObject):
             return
 
         previous_members = list(group.member_ids)
+        removed_contact = self.peer_manager.get_contact(contact_id)
+        removed_nickname = removed_contact.nickname if removed_contact else contact_id[:8]
+
         if contact_id in group.member_ids:
             group.member_ids.remove(contact_id)
         self.storage.add_group(group)
 
         members_payload = self._build_members_payload(group.member_ids)
 
+        # 제거를 실행한 나(actor) 화면에 "나갔습니다" 시스템 메시지를 남긴다.
+        system_message = Message(
+            id=str(uuid.uuid4()),
+            conversation_id=group.id,
+            conversation_type=ConversationType.GROUP,
+            sender_id="",
+            type=MessageType.SYSTEM,
+            timestamp=time.time(),
+            text=f"{removed_nickname}님이 그룹에서 나갔습니다",
+        )
+        self.storage.add_message(system_message)
+        self.message_received.emit(system_message)
+
         # 제거된 사람도 "빠졌다"는 사실을 알아야 하므로, 이전 멤버 전원(나 자신 제외)에게 알린다.
+        # left_member를 함께 실어 보내 남은 멤버들도 동일한 시스템 메시지를 만들도록 한다.
         for mid in previous_members:
             if mid == self.client_id:
                 continue
@@ -298,6 +356,7 @@ class ChatEngine(QObject):
                     "name": group.name,
                     "action": "remove",
                     "members": members_payload,
+                    "left_member": removed_nickname,
                 },
             )
             self.socket.send_reliable(packet, contact.address)
@@ -335,6 +394,99 @@ class ChatEngine(QObject):
         for contact in self._resolve_targets(conversation_id, conversation_type):
             packet = Packet(msg_type=MsgType.READ_RECEIPT, seq=0, sender_id=self.client_id, payload=payload)
             self.socket.send_reliable(packet, contact.address)
+
+    # ------------------------------------------------------------------
+    # 타이핑 중 표시
+    # ------------------------------------------------------------------
+    def send_typing_indicator(self, conversation_id: str, conversation_type: str) -> None:
+        """상대(들)에게 "타이핑 중" 신호를 보낸다. 신뢰성이 필요 없는 빈번한 신호라
+        ``send_unreliable``로 보내고 잊는다."""
+        group_id = conversation_id if conversation_type == ConversationType.GROUP else None
+        payload: dict = {"conversation_type": conversation_type}
+        if group_id is not None:
+            payload["group_id"] = group_id
+
+        for contact in self._resolve_targets(conversation_id, conversation_type):
+            packet = Packet(msg_type=MsgType.TYPING, seq=0, sender_id=self.client_id, payload=payload)
+            self.socket.send_unreliable(packet, contact.address)
+
+    # ------------------------------------------------------------------
+    # 메시지 삭제/편집
+    # ------------------------------------------------------------------
+    def delete_message(self, message_id: str, conversation_id: str, conversation_type: str) -> None:
+        """내가 보낸 메시지만 삭제할 수 있다. 삭제 후 상대(들)에게도 전파한다."""
+        message = self.storage.get_message_by_id(message_id)
+        if message is None or message.sender_id != self.client_id:
+            return
+
+        self.storage.mark_message_deleted(message_id)
+
+        group_id = conversation_id if conversation_type == ConversationType.GROUP else None
+        payload = {
+            "message_id": message_id,
+            "conversation_type": conversation_type,
+            "group_id": group_id,
+        }
+        for contact in self._resolve_targets(conversation_id, conversation_type):
+            packet = Packet(msg_type=MsgType.MESSAGE_DELETE, seq=0, sender_id=self.client_id, payload=payload)
+            self.socket.send_reliable(packet, contact.address)
+
+        self.message_deleted.emit(message_id, conversation_id)
+
+    def edit_message(
+        self, message_id: str, conversation_id: str, conversation_type: str, new_text: str
+    ) -> None:
+        """내가 보낸 메시지만 편집할 수 있다. 편집 후 상대(들)에게도 전파한다."""
+        message = self.storage.get_message_by_id(message_id)
+        if message is None or message.sender_id != self.client_id:
+            return
+
+        edited_at = time.time()
+        self.storage.update_message_text(message_id, new_text, edited_at)
+
+        group_id = conversation_id if conversation_type == ConversationType.GROUP else None
+        payload = {
+            "message_id": message_id,
+            "conversation_type": conversation_type,
+            "group_id": group_id,
+            "new_text": new_text,
+            "edited_at": edited_at,
+        }
+        for contact in self._resolve_targets(conversation_id, conversation_type):
+            packet = Packet(msg_type=MsgType.MESSAGE_EDIT, seq=0, sender_id=self.client_id, payload=payload)
+            self.socket.send_reliable(packet, contact.address)
+
+        self.message_edited.emit(message_id, conversation_id, new_text)
+
+    # ------------------------------------------------------------------
+    # 네트워크 연결 진단 (ping)
+    # ------------------------------------------------------------------
+    def ping_address(self, ip: str, port: int, callback: Callable[[dict], None]) -> None:
+        """등록된 연락처가 아니어도(IP만 알아도) 진단 가능. callback(result)를 비동기로 호출한다.
+
+        result = {"reachable": bool, "latency_ms": float | None, "error": str | None}
+
+        PING을 ``send_reliable``로 보내고, ACK 콜백(``on_ack``)으로 왕복 시간을
+        측정한다(별도 PONG 응답 없이 ACK만으로 충분하다). ``MAX_RETRIES``를
+        모두 소진해 실패(``on_fail``)하면 도달 불가로 판단한다.
+        """
+        sent_at = time.time()
+        packet = Packet(msg_type=MsgType.PING, seq=0, sender_id=self.client_id, payload={})
+
+        def _on_ack() -> None:
+            latency_ms = (time.time() - sent_at) * 1000
+            callback({"reachable": True, "latency_ms": latency_ms, "error": None})
+
+        def _on_fail() -> None:
+            callback(
+                {
+                    "reachable": False,
+                    "latency_ms": None,
+                    "error": "응답이 없습니다 (방화벽에 막혔거나 상대가 꺼져 있을 수 있습니다)",
+                }
+            )
+
+        self.socket.send_reliable(packet, (ip, port), on_ack=_on_ack, on_fail=_on_fail)
 
     # ------------------------------------------------------------------
     # 텍스트 전송
@@ -634,6 +786,9 @@ class ChatEngine(QObject):
             MsgType.FILE_CANCEL: self._handle_file_cancel,
             MsgType.FILE_RESUME_REQUEST: self._handle_file_resume_request,
             MsgType.READ_RECEIPT: self._handle_read_receipt,
+            MsgType.TYPING: self._handle_typing,
+            MsgType.MESSAGE_DELETE: self._handle_message_delete,
+            MsgType.MESSAGE_EDIT: self._handle_message_edit,
         }.get(packet.msg_type)
         if handler:
             handler(packet, addr)
@@ -710,6 +865,57 @@ class ChatEngine(QObject):
 
         if updated:
             self.messages_read_up_to.emit(conversation_id, up_to_ts)
+
+    def _handle_typing(self, packet: Packet, addr: tuple[str, int]) -> None:
+        payload = packet.payload or {}
+        conversation_type = payload.get("conversation_type", ConversationType.DIRECT)
+
+        if conversation_type == ConversationType.GROUP:
+            conversation_id = payload.get("group_id")
+        else:
+            conversation_id = self._resolve_contact(packet.sender_id, addr[0], addr[1])
+        if conversation_id is None:
+            return
+
+        sender_contact_id = self._resolve_contact(packet.sender_id, addr[0], addr[1])
+        self.typing_indicator.emit(conversation_id, conversation_type, sender_contact_id)
+
+    def _handle_message_delete(self, packet: Packet, addr: tuple[str, int]) -> None:
+        payload = packet.payload or {}
+        message_id = payload.get("message_id")
+        if not message_id:
+            return
+
+        message = self.storage.get_message_by_id(message_id)
+        if message is None:
+            return
+
+        # 보안 검증: 원래 메시지의 발신자(전역 CLIENT_ID)와 이 삭제 요청을
+        # 보낸 사람이 일치하는지 확인한다 (남의 메시지를 삭제하지 못하도록).
+        if message.sender_id != packet.sender_id:
+            return
+
+        self.storage.mark_message_deleted(message_id)
+        self.message_deleted.emit(message_id, message.conversation_id)
+
+    def _handle_message_edit(self, packet: Packet, addr: tuple[str, int]) -> None:
+        payload = packet.payload or {}
+        message_id = payload.get("message_id")
+        new_text = payload.get("new_text")
+        if not message_id or new_text is None:
+            return
+
+        message = self.storage.get_message_by_id(message_id)
+        if message is None:
+            return
+
+        # 보안 검증: 원래 메시지의 발신자와 이 편집 요청을 보낸 사람이 일치하는지 확인한다.
+        if message.sender_id != packet.sender_id:
+            return
+
+        edited_at = payload.get("edited_at", time.time())
+        self.storage.update_message_text(message_id, new_text, edited_at)
+        self.message_edited.emit(message_id, message.conversation_id, new_text)
 
     def _handle_group_invite(self, packet: Packet, addr: tuple[str, int]) -> None:
         payload = packet.payload
@@ -795,6 +1001,36 @@ class ChatEngine(QObject):
         group = Group(id=group_id, name=name, member_ids=member_ids)
         self.storage.add_group(group)
         self._groups[group.id] = group
+
+        # 다른 멤버가 전파한 참여/나감 시스템 메시지를 나에게도 동일하게 반영한다.
+        joined_members = payload.get("joined_members") or []
+        for joined_nickname in joined_members:
+            system_message = Message(
+                id=str(uuid.uuid4()),
+                conversation_id=group_id,
+                conversation_type=ConversationType.GROUP,
+                sender_id="",
+                type=MessageType.SYSTEM,
+                timestamp=time.time(),
+                text=f"{joined_nickname}님이 그룹에 참여했습니다",
+            )
+            self.storage.add_message(system_message)
+            self.message_received.emit(system_message)
+
+        left_member = payload.get("left_member")
+        if left_member:
+            system_message = Message(
+                id=str(uuid.uuid4()),
+                conversation_id=group_id,
+                conversation_type=ConversationType.GROUP,
+                sender_id="",
+                type=MessageType.SYSTEM,
+                timestamp=time.time(),
+                text=f"{left_member}님이 그룹에서 나갔습니다",
+            )
+            self.storage.add_message(system_message)
+            self.message_received.emit(system_message)
+
         self.group_updated.emit(group.id)
 
     def _handle_file_meta(self, packet: Packet, addr: tuple[str, int]) -> None:

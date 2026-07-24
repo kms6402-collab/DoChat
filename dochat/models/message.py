@@ -12,6 +12,7 @@ class ConversationType:
 class MessageType:
     TEXT = "text"
     FILE = "file"
+    SYSTEM = "system"
 
 
 class FileStatus:
@@ -34,6 +35,8 @@ class Message:
     file_id: str | None = None
     status: str = "sent"  # "sent" | "pending" | "failed"
     read_at: float | None = None
+    deleted: bool = False
+    edited_at: float | None = None
 
 
 @dataclass
