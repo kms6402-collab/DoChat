@@ -65,7 +65,9 @@ class _AvatarBadge(QWidget):
         self.avatar = QLabel(title[:1].upper() if title else "?", self)
         self.avatar.setGeometry(0, 0, AVATAR_SIZE, AVATAR_SIZE)
         self.avatar.setAlignment(Qt.AlignCenter)
-        avatar_bg = "#3B6FE0" if is_group else "#8A8F98"
+        # 카카오톡 스타일(노란 내 말풍선 + 흰 사이드바)과 어울리도록, 파란
+        # 계열 대신 톤다운된 앰버/그레이 계열로 아바타 배경을 조정했다.
+        avatar_bg = "#D9A441" if is_group else "#8B95A1"
         self.avatar.setStyleSheet(
             f"background-color: {avatar_bg}; color: #FFFFFF; border-radius: {AVATAR_SIZE // 2}px;"
             f"font-weight: 600; font-size: 14px;"

@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from dochat.config import FILE_CHUNK_SIZE
 from dochat.models.message import FileRecord, FileStatus, MessageType
 from dochat.models.message import Message
-from dochat.ui.themes import get_theme_colors
+from dochat.ui.themes import get_app_theme, get_theme_colors
 
 try:
     # 같은 앱 내부 재사용: 폴더에서 보기(OS별 파일 탐색기 열기) 로직을 file_room과 공유한다.
@@ -145,6 +145,9 @@ class MessageBubble(QWidget):
         # 채팅 테마/커스텀 색 반영: 정적 QSS의 objectName 규칙 대신 실행 중
         # 계산된 색상을 인라인 스타일시트로 적용해 즉시 반영되도록 한다.
         self._mine_bg, self._mine_text, self._other_bg, self._other_text = get_theme_colors(storage)
+        # 상대방 말풍선(흰 배경)에 옅은 테두리를 둘러 배경과의 경계를 표시하기
+        # 위해 테마의 보더 색만 별도로 가져온다(카카오톡 스타일: 흰 배경 + 옅은 테두리).
+        self._border_color = get_app_theme(storage).border
 
         if message.type == MessageType.SYSTEM:
             self._build_system_content()
@@ -165,7 +168,13 @@ class MessageBubble(QWidget):
         bubble_frame = _ClickableFrame(on_double_click=self._open_file)
         bubble_frame.setObjectName("BubbleFrameMine" if is_mine else "BubbleFrameOther")
         bubble_bg = self._mine_bg if is_mine else self._other_bg
-        bubble_frame.setStyleSheet(f"background-color: {bubble_bg}; border-radius: 12px;")
+        if is_mine:
+            bubble_frame.setStyleSheet(f"background-color: {bubble_bg}; border-radius: 16px;")
+        else:
+            bubble_frame.setStyleSheet(
+                f"background-color: {bubble_bg}; border-radius: 16px; "
+                f"border: 1px solid {self._border_color};"
+            )
         bubble_layout = QVBoxLayout(bubble_frame)
         bubble_layout.setContentsMargins(12, 8, 12, 8)
         bubble_layout.setSpacing(6)

@@ -10,6 +10,7 @@
     {app_bg} {sidebar_bg} {border}
     {text_primary} {text_secondary}
     {selection_bg} {hover_bg}
+    {font_family} {font_size}
 
 주의: QSS의 블록 구분자 ``{``/``}``는 ``str.format``과 충돌하므로 모두
 ``{{``/``}}``로 이스케이프되어 있다. (원본 ``styles.qss`` 파일 자체는
@@ -23,14 +24,14 @@ STYLE_TEMPLATE = """/* DoChat - 오피스 스타일 스타일시트 (테마 대�
 */
 
 * {{
-    font-family: "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-family: {font_family};
     outline: none;
 }}
 
 QWidget {{
     background-color: {app_bg};
     color: {text_primary};
-    font-size: 13px;
+    font-size: {font_size}px;
 }}
 
 QMainWindow {{
@@ -59,12 +60,13 @@ QPushButton#SidebarActionButton {{
     color: {accent};
     border: 1px solid {border};
     border-radius: 8px;
-    padding: 7px 10px;
+    padding: 9px 12px;
+    min-height: 18px;
     font-weight: 600;
 }}
 
 QPushButton#SidebarActionButton:hover {{
-    background-color: #EEF2FD;
+    background-color: {hover_bg};
     border: 1px solid {accent};
 }}
 
@@ -155,12 +157,13 @@ QScrollArea#ChatScrollArea {{
    아래 셀렉터들은 폴백/참고용이며 대응하는 앱 테마 색으로 치환해 둔다) */
 #BubbleFrameMine {{
     background-color: {accent};
-    border-radius: 12px;
+    border-radius: 16px;
 }}
 
 #BubbleFrameOther {{
     background-color: {hover_bg};
-    border-radius: 12px;
+    border: 1px solid {border};
+    border-radius: 16px;
 }}
 
 #BubbleTextMine {{

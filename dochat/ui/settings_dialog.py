@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QUrl
-from PySide6.QtGui import QColor, QDesktopServices
+from PySide6.QtGui import QColor, QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFontComboBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -33,6 +34,8 @@ from dochat import autostart, config, update_checker
 from dochat.models.storage import Storage
 from dochat.network.chat_engine import ChatEngine
 from dochat.ui import themes
+
+_DEFAULT_FONT_NAME = "Apple SD Gothic Neo"
 
 
 class SettingsDialog(QDialog):
@@ -166,6 +169,28 @@ class SettingsDialog(QDialog):
         form.addRow("미리보기", preview_frame)
 
         self._update_color_buttons()
+
+        # --- 폰트 -----------------------------------------------------------
+        # 앱 전체(사이드바/대화 목록/버튼 등 QSS 적용 위젯)의 글꼴/글자 크기를
+        # 사용자가 직접 고를 수 있게 한다. 말풍선 안의 텍스트(message_bubble.py)는
+        # QSS 밖에서 인라인 스타일로 그려지므로 이 설정의 영향을 받지 않는다.
+        font_row = QHBoxLayout()
+        self._font_combo = QFontComboBox()
+        saved_font_family = storage.get_setting("app_font_family") or _DEFAULT_FONT_NAME
+        self._font_combo.setCurrentFont(QFont(saved_font_family))
+        self._font_size_spin = QSpinBox()
+        self._font_size_spin.setRange(10, 20)
+        self._font_size_spin.setSuffix("px")
+        saved_font_size = storage.get_setting("app_font_size")
+        self._font_size_spin.setValue(int(saved_font_size) if saved_font_size else 13)
+        font_row.addWidget(self._font_combo, 1)
+        font_row.addWidget(self._font_size_spin)
+        form.addRow("폰트", font_row)
+
+        font_hint = QLabel("앱 전체(메뉴/목록/버튼 등)의 글꼴과 글자 크기입니다. 저장 후 즉시 반영됩니다.")
+        font_hint.setObjectName("DialogHint")
+        font_hint.setWordWrap(True)
+        form.addRow("", font_hint)
 
         # --- 보안 키(암호화) -----------------------------------------------
         self._network_key_edit = QLineEdit(storage.get_setting("network_key", "") or "")
@@ -457,5 +482,8 @@ class SettingsDialog(QDialog):
             success, message = autostart.set_enabled(self._autostart_check.isChecked())
             if not success:
                 QMessageBox.warning(self, "자동 시작 설정 실패", message)
+
+        self._storage.set_setting("app_font_family", self._font_combo.currentFont().family())
+        self._storage.set_setting("app_font_size", str(self._font_size_spin.value()))
 
         self.accept()
