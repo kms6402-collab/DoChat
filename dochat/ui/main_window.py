@@ -354,6 +354,7 @@ class MainWindow(QMainWindow):
             name = self._find_group_name(self._current_conversation_id)
             self._header_title.setText(name)
             self._header_subtitle.setText("그룹 대화")
+        self._header_title.setToolTip(name)
 
     # ------------------------------------------------------------------
     # UI 이벤트 핸들러
