@@ -1,6 +1,7 @@
 """SQLite 기반 로컬 저장소: 연락처, 그룹, 메시지 히스토리, 파일 메타데이터."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -50,12 +51,30 @@ CREATE TABLE IF NOT EXISTS files (
     status TEXT NOT NULL,
     timestamp REAL NOT NULL,
     conversation_id TEXT NOT NULL,
-    direction TEXT NOT NULL
+    direction TEXT NOT NULL,
+    conversation_type TEXT NOT NULL DEFAULT 'direct'
 );
 
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
+);
+
+-- 중단된(취소/연결끊김) 다운로드를 이어받기 위한 정보. 받은 청크가 하나라도
+-- 있는 상태로 취소되면 여기에 기록되고, 재개(resume_incoming_file) 시 사용된 뒤 삭제된다.
+CREATE TABLE IF NOT EXISTS resumable_downloads (
+    file_id TEXT PRIMARY KEY,
+    filename TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    mime_type TEXT NOT NULL,
+    total_chunks INTEGER NOT NULL,
+    received_indices TEXT NOT NULL,
+    tmp_path TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    conversation_type TEXT NOT NULL,
+    sender_contact_id TEXT NOT NULL,
+    sender_ip TEXT NOT NULL,
+    sender_port INTEGER NOT NULL
 );
 """
 
@@ -76,6 +95,12 @@ class Storage:
             self._conn.execute("ALTER TABLE messages ADD COLUMN status TEXT NOT NULL DEFAULT 'sent'")
         if "read_at" not in cols:
             self._conn.execute("ALTER TABLE messages ADD COLUMN read_at REAL")
+
+        file_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(files)").fetchall()}
+        if "conversation_type" not in file_cols:
+            self._conn.execute(
+                "ALTER TABLE files ADD COLUMN conversation_type TEXT NOT NULL DEFAULT 'direct'"
+            )
         self._conn.commit()
 
     def close(self) -> None:
@@ -257,8 +282,8 @@ class Storage:
     def add_file_record(self, record: FileRecord) -> None:
         self._conn.execute(
             """INSERT OR REPLACE INTO files
-               (file_id, filename, size, mime_type, local_path, status, timestamp, conversation_id, direction)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (file_id, filename, size, mime_type, local_path, status, timestamp, conversation_id, direction, conversation_type)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 record.file_id,
                 record.filename,
@@ -269,6 +294,7 @@ class Storage:
                 record.timestamp,
                 record.conversation_id,
                 record.direction,
+                record.conversation_type,
             ),
         )
         self._conn.commit()
@@ -291,6 +317,7 @@ class Storage:
             timestamp=r["timestamp"],
             conversation_id=r["conversation_id"],
             direction=r["direction"],
+            conversation_type=r["conversation_type"] if r["conversation_type"] is not None else "direct",
         )
 
     def get_all_files(self) -> list[FileRecord]:
@@ -306,6 +333,79 @@ class Storage:
                 timestamp=r["timestamp"],
                 conversation_id=r["conversation_id"],
                 direction=r["direction"],
+                conversation_type=r["conversation_type"] if r["conversation_type"] is not None else "direct",
             )
             for r in rows
         ]
+
+    # --- resumable downloads (다운로드 이어받기) -------------------------
+    def save_resumable_download(
+        self,
+        file_id: str,
+        filename: str,
+        size: int,
+        mime_type: str,
+        total_chunks: int,
+        received_indices: list[int],
+        tmp_path: str,
+        conversation_id: str,
+        conversation_type: str,
+        sender_contact_id: str,
+        sender_ip: str,
+        sender_port: int,
+    ) -> None:
+        self._conn.execute(
+            """INSERT OR REPLACE INTO resumable_downloads
+               (file_id, filename, size, mime_type, total_chunks, received_indices, tmp_path,
+                conversation_id, conversation_type, sender_contact_id, sender_ip, sender_port)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                file_id,
+                filename,
+                size,
+                mime_type,
+                total_chunks,
+                json.dumps(sorted(received_indices)),
+                tmp_path,
+                conversation_id,
+                conversation_type,
+                sender_contact_id,
+                sender_ip,
+                sender_port,
+            ),
+        )
+        self._conn.commit()
+
+    def get_resumable_download(self, file_id: str) -> dict | None:
+        r = self._conn.execute(
+            "SELECT * FROM resumable_downloads WHERE file_id = ?", (file_id,)
+        ).fetchone()
+        if r is None:
+            return None
+        return {
+            "file_id": r["file_id"],
+            "filename": r["filename"],
+            "size": r["size"],
+            "mime_type": r["mime_type"],
+            "total_chunks": r["total_chunks"],
+            "received_indices": json.loads(r["received_indices"]),
+            "tmp_path": r["tmp_path"],
+            "conversation_id": r["conversation_id"],
+            "conversation_type": r["conversation_type"],
+            "sender_contact_id": r["sender_contact_id"],
+            "sender_ip": r["sender_ip"],
+            "sender_port": r["sender_port"],
+        }
+
+    def delete_resumable_download(self, file_id: str) -> None:
+        self._conn.execute("DELETE FROM resumable_downloads WHERE file_id = ?", (file_id,))
+        self._conn.commit()
+
+    def get_all_resumable_downloads(self) -> list[dict]:
+        rows = self._conn.execute("SELECT file_id FROM resumable_downloads").fetchall()
+        results = []
+        for r in rows:
+            info = self.get_resumable_download(r["file_id"])
+            if info is not None:
+                results.append(info)
+        return results

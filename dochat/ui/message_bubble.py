@@ -65,6 +65,8 @@ class MessageBubble(QWidget):
         show_sender: bool = False,
         file_record: FileRecord | None = None,
         on_cancel_requested: Callable[[str, str], None] | None = None,
+        on_resume_requested: Callable[[str], None] | None = None,
+        resumable: bool = False,
         parent: QWidget | None = None,
         storage=None,
     ):
@@ -73,10 +75,13 @@ class MessageBubble(QWidget):
         self._is_mine = is_mine
         self._file_record = file_record
         self._on_cancel_requested = on_cancel_requested
+        self._on_resume_requested = on_resume_requested
+        self._resumable = resumable
         self._progress_bar: QProgressBar | None = None
         self._cancel_button: QPushButton | None = None
         self._file_action_row: QHBoxLayout | None = None
         self._cancelled_label: QLabel | None = None
+        self._resume_button: QPushButton | None = None
         self._read_label: QLabel | None = None
 
         # 채팅 테마/커스텀 색 반영: 정적 QSS의 objectName 규칙 대신 실행 중
@@ -226,9 +231,21 @@ class MessageBubble(QWidget):
             self._cancel_button = cancel_button
         elif status == FileStatus.CANCELLED:
             self._progress_bar = None
+            cancelled_row = QHBoxLayout()
+            cancelled_row.setContentsMargins(0, 0, 0, 0)
+            cancelled_row.setSpacing(6)
             cancelled_label = QLabel("취소됨")
             cancelled_label.setStyleSheet("color: #9AA1AC; font-size: 11px; background: transparent;")
-            layout.addWidget(cancelled_label)
+            cancelled_row.addWidget(cancelled_label)
+            if self._resumable and record is not None and record.direction == "in":
+                resume_button = QPushButton("이어받기")
+                resume_button.setCursor(Qt.PointingHandCursor)
+                resume_button.setFixedHeight(20)
+                resume_button.clicked.connect(self._on_resume_clicked)
+                cancelled_row.addWidget(resume_button)
+                self._resume_button = resume_button
+            cancelled_row.addStretch(1)
+            layout.addLayout(cancelled_row)
             self._cancelled_label = cancelled_label
         else:
             self._progress_bar = None
@@ -255,6 +272,11 @@ class MessageBubble(QWidget):
         if self._on_cancel_requested is None or self._file_record is None:
             return
         self._on_cancel_requested(self._file_record.file_id, self._file_record.direction)
+
+    def _on_resume_clicked(self) -> None:
+        if self._on_resume_requested is None or self._file_record is None:
+            return
+        self._on_resume_requested(self._file_record.file_id)
 
     def _reveal_in_folder(self) -> None:
         if not self._file_record:
@@ -325,16 +347,38 @@ class MessageBubble(QWidget):
                 self._bubble_layout.insertLayout(self._bubble_layout.count() - 1, action_row)
                 self._file_action_row = action_row
 
-    def mark_cancelled(self) -> None:
-        """전송/수신 취소 시 진행률 바/취소 버튼을 숨기고 "취소됨" 라벨을 표시한다."""
+    def mark_cancelled(self, resumable: bool = False) -> None:
+        """전송/수신 취소 시 진행률 바/취소 버튼을 숨기고 "취소됨" 라벨을 표시한다.
+
+        ``resumable=True``이고 수신(direction == "in") 중이던 파일이면 "이어받기"
+        버튼도 함께 표시한다(대화가 다시 로드되지 않아 버블이 재생성되지 않는 경우 대비).
+        """
         if self._progress_bar is not None:
             self._progress_bar.hide()
         if self._cancel_button is not None:
             self._cancel_button.hide()
         if self._file_record is not None:
             self._file_record.status = FileStatus.CANCELLED
+        self._resumable = resumable or self._resumable
         if self._cancelled_label is None and self._bubble_layout is not None:
+            cancelled_row = QHBoxLayout()
+            cancelled_row.setContentsMargins(0, 0, 0, 0)
+            cancelled_row.setSpacing(6)
             cancelled_label = QLabel("취소됨")
             cancelled_label.setStyleSheet("color: #9AA1AC; font-size: 11px; background: transparent;")
-            self._bubble_layout.insertWidget(self._bubble_layout.count() - 1, cancelled_label)
+            cancelled_row.addWidget(cancelled_label)
+            if (
+                self._resumable
+                and self._resume_button is None
+                and self._file_record is not None
+                and self._file_record.direction == "in"
+            ):
+                resume_button = QPushButton("이어받기")
+                resume_button.setCursor(Qt.PointingHandCursor)
+                resume_button.setFixedHeight(20)
+                resume_button.clicked.connect(self._on_resume_clicked)
+                cancelled_row.addWidget(resume_button)
+                self._resume_button = resume_button
+            cancelled_row.addStretch(1)
+            self._bubble_layout.insertLayout(self._bubble_layout.count() - 1, cancelled_row)
             self._cancelled_label = cancelled_label
