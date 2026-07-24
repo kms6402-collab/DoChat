@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dochat import config, update_checker
+from dochat import autostart, config, update_checker
 from dochat.models.storage import Storage
 from dochat.network.chat_engine import ChatEngine
 from dochat.ui import themes
@@ -192,6 +192,14 @@ class SettingsDialog(QDialog):
         notify_popup_default = storage.get_setting("notify_popup", "1") == "1"
         self._notify_popup_check.setChecked(notify_popup_default)
         form.addRow("", self._notify_popup_check)
+
+        # --- 자동 시작 -----------------------------------------------------
+        self._autostart_check = QCheckBox("Windows 시작 시 자동 실행")
+        self._autostart_check.setChecked(autostart.is_enabled())
+        self._autostart_check.setEnabled(autostart.is_supported())
+        if not autostart.is_supported():
+            self._autostart_check.setToolTip("패키지된 Windows 실행 파일에서만 사용할 수 있습니다.")
+        form.addRow("", self._autostart_check)
 
         # --- 버전 정보 / 업데이트 -----------------------------------------
         version_row = QHBoxLayout()
@@ -427,5 +435,10 @@ class SettingsDialog(QDialog):
         self._storage.set_setting("bubble_theme", self._current_theme_key())
         self._storage.set_setting("bubble_mine_color", self._mine_color)
         self._storage.set_setting("bubble_other_color", self._other_color)
+
+        if autostart.is_supported():
+            success, message = autostart.set_enabled(self._autostart_check.isChecked())
+            if not success:
+                QMessageBox.warning(self, "자동 시작 설정 실패", message)
 
         self.accept()
