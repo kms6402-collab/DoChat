@@ -105,6 +105,8 @@ class ChatView(QWidget):
             on_cancel_requested=self._on_cancel_requested,
             on_resume_requested=self._on_resume_requested,
             resumable=resumable,
+            on_delete_requested=self._on_delete_requested,
+            on_edit_requested=self._on_edit_requested,
         )
         if message.file_id:
             self._bubbles_by_file_id[message.file_id] = bubble
@@ -222,6 +224,26 @@ class ChatView(QWidget):
 
     def _on_resume_requested(self, file_id: str) -> None:
         self._chat_engine.resume_incoming_file(file_id)
+
+    def _on_delete_requested(self, message_id: str) -> None:
+        self._chat_engine.delete_message(message_id, self.conversation_id, self.conversation_type)
+
+    def _on_edit_requested(self, message_id: str, new_text: str) -> None:
+        self._chat_engine.edit_message(
+            message_id, self.conversation_id, self.conversation_type, new_text
+        )
+
+    def mark_message_deleted(self, message_id: str) -> None:
+        """message_deleted 시그널 수신 시 해당 버블을 즉시 "삭제된 메시지입니다"로 갱신한다."""
+        bubble = self._bubbles_by_message_id.get(message_id)
+        if bubble is not None:
+            bubble.mark_deleted()
+
+    def mark_message_edited(self, message_id: str, new_text: str) -> None:
+        """message_edited 시그널 수신 시 해당 버블의 텍스트를 새 내용으로 갱신한다."""
+        bubble = self._bubbles_by_message_id.get(message_id)
+        if bubble is not None:
+            bubble.update_text(new_text)
 
     def mark_messages_read_up_to(self, conversation_id: str, up_to_ts: float) -> None:
         """읽음 확인(READ_RECEIPT)이 도착했을 때, 현재 표시 중인 대화면 해당

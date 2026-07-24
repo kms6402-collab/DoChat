@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -95,6 +96,10 @@ class MainWindow(QMainWindow):
 
         # 대화별 안읽은 메시지 개수 (conversation_id -> count, 로컬 UI 전용)
         self._unread_counts: dict[str, int] = {}
+
+        # 타이핑 중 표시 관련 상태
+        self._typing_timer: QTimer | None = None
+        self._last_typing_sent_at: float = 0.0
 
         self._build_ui()
         self._connect_signals()
@@ -308,6 +313,7 @@ class MainWindow(QMainWindow):
         self.compose_bar.text_submitted.connect(self._on_text_submitted)
         self.compose_bar.file_selected.connect(self._on_file_to_send)
         self.chat_view.file_dropped.connect(self._on_file_to_send)
+        self.compose_bar._input.textChanged.connect(self._on_my_text_changed)
 
         self.chat_engine.message_received.connect(self._on_message_received)
         self.chat_engine.message_received.connect(self._on_message_received_for_badge)
@@ -320,6 +326,9 @@ class MainWindow(QMainWindow):
         self.chat_engine.group_updated.connect(self._on_group_updated)
         self.chat_engine.messages_read_up_to.connect(self._on_messages_read_up_to)
         self.chat_engine.contact_added.connect(self._on_contact_added_by_peer)
+        self.chat_engine.typing_indicator.connect(self._on_typing_indicator)
+        self.chat_engine.message_deleted.connect(self._on_message_deleted)
+        self.chat_engine.message_edited.connect(self._on_message_edited)
 
     # ------------------------------------------------------------------
     def _refresh_lists(self) -> None:
@@ -495,6 +504,22 @@ class MainWindow(QMainWindow):
         self.chat_view.append_message(message)
         self.conversation_list.update_preview(
             self._current_conversation_id, self._current_conversation_type, self.storage
+        )
+
+    def _on_my_text_changed(self, text: str) -> None:
+        """입력창 내용이 바뀔 때마다(실시간) 상대에게 타이핑 중임을 알린다.
+
+        UDP 기반이라 매 글자마다 보내도 큰 부담은 없지만, 과도한 전송을
+        막기 위해 최근 1초 이내에 보냈다면 건너뛴다(간단한 디바운스).
+        """
+        if self._current_conversation_id is None:
+            return
+        now = time.time()
+        if now - self._last_typing_sent_at < 1.0:
+            return
+        self._last_typing_sent_at = now
+        self.chat_engine.send_typing_indicator(
+            self._current_conversation_id, self._current_conversation_type
         )
 
     def _on_file_to_send(self, file_path: str) -> None:
@@ -726,6 +751,30 @@ class MainWindow(QMainWindow):
         self._refresh_lists()
         self.conversation_list.select_conversation(contact_id, ConversationType.DIRECT)
         self._on_conversation_selected(contact_id, ConversationType.DIRECT)
+
+    def _on_typing_indicator(self, conversation_id: str, conversation_type: str, contact_id: str) -> None:
+        """상대가 타이핑 중임을 알려오면, 지금 열려 있는 대화일 때만 헤더 부제에
+        잠깐 표시했다가 3초 뒤 원래 상태(온라인/오프라인/그룹 대화)로 되돌린다."""
+        if (
+            self._current_conversation_id != conversation_id
+            or self._current_conversation_type != conversation_type
+        ):
+            return
+        if conversation_type == ConversationType.GROUP:
+            contact = self.chat_engine.get_contact_for_sender(contact_id)
+        else:
+            contact = self.chat_engine.get_contact(contact_id)
+        nickname = contact.nickname if contact else contact_id
+        self._header_subtitle.setText(f"{nickname}님이 입력 중...")
+        QTimer.singleShot(3000, self._update_header)
+
+    def _on_message_deleted(self, message_id: str, conversation_id: str) -> None:
+        if self._current_conversation_id == conversation_id:
+            self.chat_view.mark_message_deleted(message_id)
+
+    def _on_message_edited(self, message_id: str, conversation_id: str, new_text: str) -> None:
+        if self._current_conversation_id == conversation_id:
+            self.chat_view.mark_message_edited(message_id, new_text)
 
     # ------------------------------------------------------------------
     def closeEvent(self, event) -> None:
