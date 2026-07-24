@@ -23,9 +23,14 @@ class MsgType:
     FILE_RESUME_REQUEST = "FILE_RESUME_REQUEST"
     ACK = "ACK"
     READ_RECEIPT = "READ_RECEIPT"
+    TYPING = "TYPING"
+    MESSAGE_DELETE = "MESSAGE_DELETE"
+    MESSAGE_EDIT = "MESSAGE_EDIT"
+    PING = "PING"
+    PONG = "PONG"
 
     # ACK가 필요 없는(응답을 기다리지 않는) 타입들
-    NO_ACK_TYPES = frozenset({ACK, PRESENCE})
+    NO_ACK_TYPES = frozenset({ACK, PRESENCE, TYPING, PONG})
 
 
 @dataclass

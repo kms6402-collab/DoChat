@@ -37,7 +37,9 @@ CREATE TABLE IF NOT EXISTS messages (
     file_id TEXT,
     timestamp REAL NOT NULL,
     status TEXT NOT NULL DEFAULT 'sent',
-    read_at REAL
+    read_at REAL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    edited_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conversation
     ON messages (conversation_id, timestamp);
@@ -95,6 +97,10 @@ class Storage:
             self._conn.execute("ALTER TABLE messages ADD COLUMN status TEXT NOT NULL DEFAULT 'sent'")
         if "read_at" not in cols:
             self._conn.execute("ALTER TABLE messages ADD COLUMN read_at REAL")
+        if "deleted" not in cols:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
+        if "edited_at" not in cols:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN edited_at REAL")
 
         file_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(files)").fetchall()}
         if "conversation_type" not in file_cols:
@@ -155,8 +161,8 @@ class Storage:
     def add_message(self, message: Message) -> None:
         self._conn.execute(
             """INSERT OR REPLACE INTO messages
-               (id, conversation_id, conversation_type, sender_id, type, text, file_id, timestamp, status, read_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, conversation_id, conversation_type, sender_id, type, text, file_id, timestamp, status, read_at, deleted, edited_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 message.id,
                 message.conversation_id,
@@ -168,30 +174,35 @@ class Storage:
                 message.timestamp,
                 message.status,
                 message.read_at,
+                1 if message.deleted else 0,
+                message.edited_at,
             ),
         )
         self._conn.commit()
+
+    @staticmethod
+    def _row_to_message(r: sqlite3.Row) -> Message:
+        return Message(
+            id=r["id"],
+            conversation_id=r["conversation_id"],
+            conversation_type=r["conversation_type"],
+            sender_id=r["sender_id"],
+            type=r["type"],
+            text=r["text"],
+            file_id=r["file_id"],
+            timestamp=r["timestamp"],
+            status=r["status"] if r["status"] is not None else "sent",
+            read_at=r["read_at"],
+            deleted=bool(r["deleted"]) if "deleted" in r.keys() and r["deleted"] is not None else False,
+            edited_at=r["edited_at"] if "edited_at" in r.keys() else None,
+        )
 
     def get_messages(self, conversation_id: str) -> list[Message]:
         rows = self._conn.execute(
             "SELECT * FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC",
             (conversation_id,),
         ).fetchall()
-        return [
-            Message(
-                id=r["id"],
-                conversation_id=r["conversation_id"],
-                conversation_type=r["conversation_type"],
-                sender_id=r["sender_id"],
-                type=r["type"],
-                text=r["text"],
-                file_id=r["file_id"],
-                timestamp=r["timestamp"],
-                status=r["status"] if r["status"] is not None else "sent",
-                read_at=r["read_at"],
-            )
-            for r in rows
-        ]
+        return [self._row_to_message(r) for r in rows]
 
     def get_pending_messages_for_contact(self, contact_id: str) -> list[Message]:
         """status='pending'이고 conversation_id가 해당 연락처(1:1 대화)인 메시지 목록."""
@@ -199,42 +210,14 @@ class Storage:
             "SELECT * FROM messages WHERE conversation_id = ? AND status = 'pending' ORDER BY timestamp ASC",
             (contact_id,),
         ).fetchall()
-        return [
-            Message(
-                id=r["id"],
-                conversation_id=r["conversation_id"],
-                conversation_type=r["conversation_type"],
-                sender_id=r["sender_id"],
-                type=r["type"],
-                text=r["text"],
-                file_id=r["file_id"],
-                timestamp=r["timestamp"],
-                status=r["status"] if r["status"] is not None else "sent",
-                read_at=r["read_at"],
-            )
-            for r in rows
-        ]
+        return [self._row_to_message(r) for r in rows]
 
     def get_all_pending_messages(self) -> list[Message]:
         """status='pending'인 모든 메시지 (재시작 시 재전송 큐 복원용)."""
         rows = self._conn.execute(
             "SELECT * FROM messages WHERE status = 'pending' ORDER BY timestamp ASC",
         ).fetchall()
-        return [
-            Message(
-                id=r["id"],
-                conversation_id=r["conversation_id"],
-                conversation_type=r["conversation_type"],
-                sender_id=r["sender_id"],
-                type=r["type"],
-                text=r["text"],
-                file_id=r["file_id"],
-                timestamp=r["timestamp"],
-                status=r["status"] if r["status"] is not None else "sent",
-                read_at=r["read_at"],
-            )
-            for r in rows
-        ]
+        return [self._row_to_message(r) for r in rows]
 
     def mark_message_status(self, message_id: str, status: str) -> None:
         self._conn.execute("UPDATE messages SET status = ? WHERE id = ?", (status, message_id))
@@ -243,6 +226,23 @@ class Storage:
     def mark_message_read(self, message_id: str, read_at: float) -> None:
         self._conn.execute("UPDATE messages SET read_at = ? WHERE id = ?", (read_at, message_id))
         self._conn.commit()
+
+    def mark_message_deleted(self, message_id: str) -> None:
+        self._conn.execute("UPDATE messages SET deleted = 1 WHERE id = ?", (message_id,))
+        self._conn.commit()
+
+    def update_message_text(self, message_id: str, new_text: str, edited_at: float) -> None:
+        self._conn.execute(
+            "UPDATE messages SET text = ?, edited_at = ? WHERE id = ?",
+            (new_text, edited_at, message_id),
+        )
+        self._conn.commit()
+
+    def get_message_by_id(self, message_id: str) -> Message | None:
+        r = self._conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+        if r is None:
+            return None
+        return self._row_to_message(r)
 
     # --- settings (환경설정 key-value) ---------------------------------
     def get_setting(self, key: str, default: str | None = None) -> str | None:
@@ -265,18 +265,7 @@ class Storage:
         ).fetchone()
         if r is None:
             return None
-        return Message(
-            id=r["id"],
-            conversation_id=r["conversation_id"],
-            conversation_type=r["conversation_type"],
-            sender_id=r["sender_id"],
-            type=r["type"],
-            text=r["text"],
-            file_id=r["file_id"],
-            timestamp=r["timestamp"],
-            status=r["status"] if r["status"] is not None else "sent",
-            read_at=r["read_at"],
-        )
+        return self._row_to_message(r)
 
     # --- files ---------------------------------------------------------
     def add_file_record(self, record: FileRecord) -> None:
