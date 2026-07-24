@@ -86,6 +86,9 @@ class MainWindow(QMainWindow):
         # 트레이 최소화 관련 상태
         self._force_quit = False
         self._tray_hint_shown = False
+        # 가장 최근에 보여준 트레이 풍선 알림이 어떤 대화에 관한 것이었는지 기억한다
+        # (풍선 알림 클릭 시 해당 대화로 바로 이동하기 위함).
+        self._last_tray_notification_conversation: tuple[str, str] | None = None
 
         # 대화별 안읽은 메시지 개수 (conversation_id -> count, 로컬 UI 전용)
         self._unread_counts: dict[str, int] = {}
@@ -112,6 +115,7 @@ class MainWindow(QMainWindow):
         self.tray_icon.setContextMenu(tray_menu)
 
         self.tray_icon.activated.connect(self._on_tray_icon_activated)
+        self.tray_icon.messageClicked.connect(self._on_tray_message_clicked)
 
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray_icon.show()
@@ -128,6 +132,15 @@ class MainWindow(QMainWindow):
     def _on_tray_icon_activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._on_tray_open_requested()
+
+    def _on_tray_message_clicked(self) -> None:
+        """트레이 풍선 알림을 클릭하면 창을 열고 해당 알림과 관련된 대화로 이동한다."""
+        self._on_tray_open_requested()
+        if self._last_tray_notification_conversation is not None:
+            conversation_id, conversation_type = self._last_tray_notification_conversation
+            self.conversation_list.select_conversation(conversation_id, conversation_type)
+            self._on_conversation_selected(conversation_id, conversation_type)
+            self._last_tray_notification_conversation = None
 
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
@@ -488,6 +501,10 @@ class MainWindow(QMainWindow):
         else:
             body = message.text or ""
 
+        self._last_tray_notification_conversation = (
+            message.conversation_id,
+            message.conversation_type,
+        )
         self.tray_icon.showMessage(title, body, QSystemTrayIcon.Information, 4000)
 
     def _on_file_completed_for_tray(self, file_id: str, success: bool) -> None:
@@ -497,6 +514,11 @@ class MainWindow(QMainWindow):
         record = self.storage.get_file_record(file_id)
         if record is None or record.direction != "in":
             return
+        # FileRecord에는 conversation_type이 없으므로, 그룹 목록에 있는 id인지로
+        # 대화 종류(1:1/그룹)를 판별한다 (_find_group_name과 동일한 방식).
+        is_group = any(g.id == record.conversation_id for g in self.chat_engine.get_groups())
+        conversation_type = ConversationType.GROUP if is_group else ConversationType.DIRECT
+        self._last_tray_notification_conversation = (record.conversation_id, conversation_type)
         self.tray_icon.showMessage(
             "DoChat", f"파일 수신 완료: {record.filename}", QSystemTrayIcon.Information, 4000
         )
