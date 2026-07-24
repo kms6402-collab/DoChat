@@ -1,7 +1,9 @@
 """DoChat 메인 윈도우: 좌측 대화 목록 + 우측 채팅 영역."""
 from __future__ import annotations
 
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -9,6 +11,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -206,8 +209,11 @@ class MainWindow(QMainWindow):
         chat_header = QFrame()
         chat_header.setObjectName("ChatHeader")
         chat_header.setFixedHeight(60)
-        chat_header_layout = QVBoxLayout(chat_header)
-        chat_header_layout.setContentsMargins(20, 8, 20, 8)
+        chat_header_outer = QHBoxLayout(chat_header)
+        chat_header_outer.setContentsMargins(20, 8, 20, 8)
+        chat_header_outer.setSpacing(8)
+
+        chat_header_layout = QVBoxLayout()
         chat_header_layout.setSpacing(2)
         chat_header_layout.setAlignment(Qt.AlignVCenter)
 
@@ -217,6 +223,11 @@ class MainWindow(QMainWindow):
         self._header_subtitle.setObjectName("ChatHeaderSubtitle")
         chat_header_layout.addWidget(self._header_title)
         chat_header_layout.addWidget(self._header_subtitle)
+        chat_header_outer.addLayout(chat_header_layout, 1)
+
+        self._export_button = QPushButton("\U0001F4BE 내보내기")
+        self._export_button.setObjectName("SidebarActionButton")
+        chat_header_outer.addWidget(self._export_button)
 
         chat_layout.addWidget(chat_header)
 
@@ -240,6 +251,7 @@ class MainWindow(QMainWindow):
         self._discover_button.clicked.connect(self._on_discover_clicked)
         self._file_room_button.clicked.connect(self._on_file_room_clicked)
         self._settings_button.clicked.connect(self._on_settings_clicked)
+        self._export_button.clicked.connect(self._on_export_conversation_clicked)
 
         self.conversation_list.conversation_selected.connect(self._on_conversation_selected)
         self.conversation_list.conversation_selected.connect(self._on_conversation_selected_clear_badge)
@@ -344,6 +356,58 @@ class MainWindow(QMainWindow):
             self._update_header()
             if self._current_conversation_id is not None:
                 self.chat_view.set_conversation(self._current_conversation_id, self._current_conversation_type, self.chat_engine.client_id)
+
+    def _on_export_conversation_clicked(self) -> None:
+        """현재 열려 있는 대화의 전체 메시지를 텍스트 파일로 내보낸다(백업)."""
+        if self._current_conversation_id is None:
+            QMessageBox.information(self, "알림", "먼저 대화를 선택해 주세요.")
+            return
+
+        if self._current_conversation_type == ConversationType.DIRECT:
+            contact = self.chat_engine.get_contact(self._current_conversation_id)
+            title = contact.nickname if contact else self._current_conversation_id
+        else:
+            title = self._find_group_name(self._current_conversation_id)
+
+        safe_title = re.sub(r'[\\/:*?"<>|]', "_", title)
+        today = datetime.now().strftime("%Y-%m-%d")
+        default_filename = f"{safe_title}_대화내역_{today}.txt"
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "대화 내보내기", default_filename, "텍스트 파일 (*.txt)"
+        )
+        if not path:
+            return
+
+        messages = self.chat_engine.get_conversation_messages(self._current_conversation_id)
+        lines = []
+        for message in messages:
+            if message.sender_id == self.chat_engine.client_id:
+                sender_name = "나"
+            else:
+                contact = self.chat_engine.get_contact(message.sender_id)
+                sender_name = contact.nickname if contact else message.sender_id
+
+            time_str = datetime.fromtimestamp(message.timestamp).strftime("%Y-%m-%d %H:%M")
+
+            if message.type == MessageType.FILE:
+                record = self.storage.get_file_record(message.file_id) if message.file_id else None
+                filename = record.filename if record else (message.file_id or "알 수 없는 파일")
+                content = f"[파일] {filename}"
+            else:
+                content = message.text or ""
+
+            lines.append(f"[{time_str}] {sender_name}: {content}")
+
+        content_text = "\n".join(lines)
+
+        try:
+            Path(path).write_text(content_text, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "내보내기 실패", str(exc))
+            return
+
+        QMessageBox.information(self, "내보내기 완료", f"대화 내용을 저장했습니다:\n{path}")
 
     def _on_conversation_selected(self, conversation_id: str, conversation_type: str) -> None:
         self._current_conversation_id = conversation_id
