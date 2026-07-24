@@ -15,7 +15,6 @@ False를 반환하며, 그 경우 UI는 기존 릴리스 페이지 안내로 폴
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -101,6 +100,76 @@ def check_for_self_update() -> dict:
     }
 
 
+def _build_update_script(new_exe_path: Path, current_exe: Path) -> str:
+    """새 exe로 교체·재실행하는 배치 스크립트 내용을 만든다.
+
+    테스트를 위해 ``apply_self_update()``에서 분리된 순수 함수다. 아래 두
+    가지 문제를 피하도록 신경 써서 작성했다 (실제 배포 후 "재시작하면
+    스크립트 오류로 교체가 안 된다"는 버그의 원인으로 확인됨):
+
+    1. PID가 아니라 이미지 이름(예: "DoChat.exe")으로 대기한다. PyInstaller
+       onefile 부트로더는 버전/환경에 따라 부모/자식 프로세스 구조를 쓸 수
+       있어, 이 파이썬 코드가 실행 중인 프로세스의 PID 하나만 감시하면 실제
+       exe 파일을 잠그고 있는 다른 관련 프로세스가 남아있어도 놓칠 수 있다.
+       이미지 이름 기준으로 "그 이름의 프로세스가 하나도 안 남을 때까지"
+       기다리면 부모/자식 구조와 무관하게 안전하다.
+    2. ``move`` 실패 시 재시도 + 로그 남기기. 백신 실시간 검사 등으로 파일이
+       막 종료된 프로세스로부터 즉시 풀리지 않는 경우가 실무에서 흔하다.
+       실패해도 조용히 다음 줄로 넘어가면 구버전이 그대로 남거나 실행 파일이
+       사라진 상태가 될 수 있으므로, 재시도 후에도 실패하면 다운로드해둔
+       새 exe를 지우지 않고 남겨두고 오류 로그를 남긴다.
+
+    스크립트 내용은 인코딩 문제를 피하기 위해 전부 영어로만 작성한다
+    (cmd.exe는 시스템 로캘 인코딩을 기대하는 경우가 많아, UTF-8로 저장된
+    배치 파일에 한글이 섞이면 깨질 수 있다).
+    """
+    image_name = current_exe.name  # 보통 "DoChat.exe"
+    lines = [
+        "@echo off",
+        "setlocal enabledelayedexpansion",
+        f'set "IMAGE_NAME={image_name}"',
+        f'set "NEW_EXE={new_exe_path}"',
+        f'set "TARGET_EXE={current_exe}"',
+        'set "LOG_FILE=%TEMP%\\dochat_update_error.log"',
+        'set "WAIT_COUNT=0"',
+        "",
+        "rem Wait until no process with this image name is running (max ~60s).",
+        ":wait_loop",
+        'tasklist /FI "IMAGENAME eq %IMAGE_NAME%" 2>NUL | find /I "%IMAGE_NAME%" >NUL',
+        "if not errorlevel 1 (",
+        "    set /a WAIT_COUNT+=1",
+        "    if !WAIT_COUNT! GEQ 60 (",
+        '        echo Timed out waiting for %IMAGE_NAME% to exit. >> "%LOG_FILE%"',
+        "        goto :eof",
+        "    )",
+        "    timeout /t 1 /nobreak >NUL",
+        "    goto wait_loop",
+        ")",
+        "",
+        "rem Replace the exe, retrying a few times in case the file handle",
+        "rem has not been released yet.",
+        'set "MOVE_TRIES=0"',
+        ":move_retry",
+        'move /Y "%NEW_EXE%" "%TARGET_EXE%" >NUL 2>>"%LOG_FILE%"',
+        "if errorlevel 1 (",
+        "    set /a MOVE_TRIES+=1",
+        "    if !MOVE_TRIES! GEQ 5 (",
+        "        echo Failed to replace %TARGET_EXE% after !MOVE_TRIES! attempts. "
+        'New file kept at %NEW_EXE% >> "%LOG_FILE%"',
+        "        goto :eof",
+        "    )",
+        "    timeout /t 2 /nobreak >NUL",
+        "    goto move_retry",
+        ")",
+        "",
+        'start "" "%TARGET_EXE%"',
+        "timeout /t 1 /nobreak >NUL",
+        'del "%~f0"',
+        "",
+    ]
+    return "\r\n".join(lines)
+
+
 def apply_self_update(download_url: str) -> tuple[bool, str]:
     """새 exe를 내려받아 현재 실행 파일을 자동으로 교체·재시작하도록 예약한다.
 
@@ -134,23 +203,12 @@ def apply_self_update(download_url: str) -> tuple[bool, str]:
         new_exe_path.unlink(missing_ok=True)
         return False, "다운로드한 파일이 비어 있습니다."
 
-    pid = os.getpid()
-    # 현재 프로세스(PID)가 완전히 종료될 때까지 기다린 뒤 exe를 교체하고
-    # 재실행한다. tasklist로 해당 PID가 더 이상 목록에 없을 때까지 반복 확인.
-    bat_content = (
-        "@echo off\r\n"
-        ":wait_loop\r\n"
-        f'tasklist /FI "PID eq {pid}" 2^>NUL | find "{pid}" >NUL\r\n'
-        "if not errorlevel 1 (\r\n"
-        "    timeout /t 1 /nobreak >NUL\r\n"
-        "    goto wait_loop\r\n"
-        ")\r\n"
-        f'move /Y "{new_exe_path}" "{current_exe}" >NUL\r\n'
-        f'start "" "{current_exe}"\r\n'
-        'del "%~f0"\r\n'
-    )
+    bat_content = _build_update_script(new_exe_path, current_exe)
     try:
-        bat_path.write_text(bat_content, encoding="utf-8")
+        # cmd.exe는 시스템 로캘(예: 한국어 Windows의 CP949) 인코딩을 기대하는
+        # 경우가 많아, 배치 파일에 한글이 섞이면 깨질 수 있다. 스크립트 내용을
+        # 전부 영어로만 작성해 인코딩 문제를 원천 차단하고, ASCII로 안전하게 쓴다.
+        bat_path.write_text(bat_content, encoding="ascii")
     except OSError as exc:
         new_exe_path.unlink(missing_ok=True)
         return False, f"업데이트 스크립트를 준비하지 못했습니다: {exc}"
