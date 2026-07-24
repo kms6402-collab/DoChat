@@ -195,6 +195,23 @@ class MainWindow(QMainWindow):
         self.conversation_list = ConversationList()
         sidebar_layout.addWidget(self.conversation_list, 1)
 
+        footer = QFrame()
+        footer.setObjectName("SidebarFooter")
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(16, 10, 16, 10)
+        footer_layout.setSpacing(8)
+
+        self._version_label = QLabel(f"버전: {config.get_version_string()}")
+        self._version_label.setObjectName("VersionLabel")
+        footer_layout.addWidget(self._version_label)
+        footer_layout.addStretch(1)
+
+        self._quit_button = QPushButton("종료")
+        self._quit_button.setObjectName("QuitButton")
+        footer_layout.addWidget(self._quit_button)
+
+        sidebar_layout.addWidget(footer)
+
         root.addWidget(sidebar)
 
         # ---------------- 우측 채팅 영역 ----------------
@@ -240,6 +257,7 @@ class MainWindow(QMainWindow):
         self._discover_button.clicked.connect(self._on_discover_clicked)
         self._file_room_button.clicked.connect(self._on_file_room_clicked)
         self._settings_button.clicked.connect(self._on_settings_clicked)
+        self._quit_button.clicked.connect(self._on_quit_button_clicked)
 
         self.conversation_list.conversation_selected.connect(self._on_conversation_selected)
         self.conversation_list.conversation_selected.connect(self._on_conversation_selected_clear_badge)
@@ -344,6 +362,13 @@ class MainWindow(QMainWindow):
             self._update_header()
             if self._current_conversation_id is not None:
                 self.chat_view.set_conversation(self._current_conversation_id, self._current_conversation_type, self.chat_engine.client_id)
+
+    def _on_quit_button_clicked(self) -> None:
+        answer = QMessageBox.question(self, "프로그램 종료", "DoChat을 완전히 종료하시겠습니까?")
+        if answer != QMessageBox.Yes:
+            return
+        self._force_quit = True
+        self.close()
 
     def _on_conversation_selected(self, conversation_id: str, conversation_type: str) -> None:
         self._current_conversation_id = conversation_id

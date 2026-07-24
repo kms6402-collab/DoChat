@@ -61,6 +61,31 @@ QPushButton#SidebarActionButton:pressed {
     background-color: #E3EAFB;
 }
 
+#SidebarFooter {
+    background-color: #F5F6F8;
+    border-top: 1px solid #E4E6EA;
+}
+
+#VersionLabel {
+    color: #8A8F98;
+    font-size: 11px;
+    background: transparent;
+}
+
+QPushButton#QuitButton {
+    background-color: transparent;
+    border: 1px solid #E4E6EA;
+    border-radius: 6px;
+    padding: 4px 12px;
+    color: #C0392B;
+    font-size: 12px;
+}
+
+QPushButton#QuitButton:hover {
+    background-color: #FBEAEA;
+    border: 1px solid #E0433B;
+}
+
 /* ---------------- 대화 목록 ---------------- */
 QListWidget#ConversationList {
     background-color: #F5F6F8;
