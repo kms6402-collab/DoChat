@@ -10,7 +10,9 @@ from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QMenu,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -69,6 +71,8 @@ class MessageBubble(QWidget):
         resumable: bool = False,
         parent: QWidget | None = None,
         storage=None,
+        on_delete_requested: Callable[[str], None] | None = None,
+        on_edit_requested: Callable[[str, str], None] | None = None,
     ):
         super().__init__(parent)
         self._message = message
@@ -83,10 +87,20 @@ class MessageBubble(QWidget):
         self._cancelled_label: QLabel | None = None
         self._resume_button: QPushButton | None = None
         self._read_label: QLabel | None = None
+        self._on_delete_requested = on_delete_requested
+        self._on_edit_requested = on_edit_requested
+        self._text_label: QLabel | None = None
+        self._edited_label: QLabel | None = None
+        self._bubble_frame: QFrame | None = None
+        self._bubble_layout: QVBoxLayout | None = None
 
         # 채팅 테마/커스텀 색 반영: 정적 QSS의 objectName 규칙 대신 실행 중
         # 계산된 색상을 인라인 스타일시트로 적용해 즉시 반영되도록 한다.
         self._mine_bg, self._mine_text, self._other_bg, self._other_text = get_theme_colors(storage)
+
+        if message.type == MessageType.SYSTEM:
+            self._build_system_content()
+            return
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(12, 3, 12, 3)
@@ -108,11 +122,16 @@ class MessageBubble(QWidget):
         bubble_layout.setContentsMargins(12, 8, 12, 8)
         bubble_layout.setSpacing(6)
         self._bubble_layout = bubble_layout
+        self._bubble_frame = bubble_frame
 
         if message.type == MessageType.FILE:
             self._build_file_content(bubble_layout)
         else:
             self._build_text_content(bubble_layout)
+
+        if is_mine and message.type == MessageType.TEXT and not message.deleted:
+            bubble_frame.setContextMenuPolicy(Qt.CustomContextMenu)
+            bubble_frame.customContextMenuRequested.connect(self._on_bubble_context_menu)
 
         meta_row = QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
@@ -157,13 +176,48 @@ class MessageBubble(QWidget):
         return time.strftime("%H:%M", time.localtime(ts))
 
     def _build_text_content(self, layout: QVBoxLayout) -> None:
-        text_label = QLabel(self._message.text or "")
-        text_label.setObjectName("BubbleTextMine" if self._is_mine else "BubbleTextOther")
         text_color = self._mine_text if self._is_mine else self._other_text
-        text_label.setStyleSheet(f"color: {text_color}; background: transparent;")
+        if self._message.deleted:
+            text_label = QLabel("삭제된 메시지입니다")
+            text_label.setStyleSheet(
+                f"color: {text_color}; background: transparent; font-style: italic;"
+            )
+        else:
+            text_label = QLabel(self._message.text or "")
+            text_label.setStyleSheet(f"color: {text_color}; background: transparent;")
+        text_label.setObjectName("BubbleTextMine" if self._is_mine else "BubbleTextOther")
         text_label.setWordWrap(True)
         text_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(text_label)
+        self._text_label = text_label
+
+        if self._message.edited_at and not self._message.deleted:
+            edited_label = QLabel("(수정됨)")
+            edited_label.setStyleSheet(
+                f"color: {text_color}; background: transparent; font-size: 10px;"
+            )
+            layout.addWidget(edited_label)
+            self._edited_label = edited_label
+
+    def _build_system_content(self) -> None:
+        """그룹 시스템 메시지(입장/퇴장 등 알림)를 카카오톡/슬랙 스타일의
+        가운데 정렬된 작은 회색 알약(pill) 라벨로 표시한다."""
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 4, 12, 4)
+        outer.setSpacing(0)
+
+        label = QLabel(self._message.text or "")
+        label.setObjectName("SystemMessageLabel")
+        label.setAlignment(Qt.AlignCenter)
+        label.setWordWrap(True)
+        label.setStyleSheet(
+            "background-color: rgba(128, 128, 128, 0.18);"
+            " color: #8A8F98;"
+            " font-size: 11px;"
+            " padding: 4px 12px;"
+            " border-radius: 10px;"
+        )
+        outer.addWidget(label, alignment=Qt.AlignCenter)
 
     def _build_file_content(self, layout: QVBoxLayout) -> None:
         record = self._file_record
@@ -268,6 +322,22 @@ class MessageBubble(QWidget):
             layout.addLayout(action_row)
             self._file_action_row = action_row
 
+    def _on_bubble_context_menu(self, pos) -> None:
+        """내가 보낸 텍스트 메시지 말풍선 우클릭 시 편집/삭제 메뉴를 띄운다."""
+        menu = QMenu(self)
+        edit_action = menu.addAction("편집")
+        delete_action = menu.addAction("삭제")
+        chosen = menu.exec(self._bubble_frame.mapToGlobal(pos))
+        if chosen == delete_action:
+            if self._on_delete_requested is not None:
+                self._on_delete_requested(self._message.id)
+        elif chosen == edit_action:
+            new_text, ok = QInputDialog.getText(
+                self, "메시지 편집", "내용:", text=self._message.text or ""
+            )
+            if ok and new_text.strip() and self._on_edit_requested is not None:
+                self._on_edit_requested(self._message.id, new_text)
+
     def _on_cancel_clicked(self) -> None:
         if self._on_cancel_requested is None or self._file_record is None:
             return
@@ -312,6 +382,38 @@ class MessageBubble(QWidget):
         self._message.read_at = read_at
         if self._read_label is not None:
             self._read_label.setVisible(True)
+
+    def mark_deleted(self) -> None:
+        """이미 렌더링된 텍스트 버블을 즉시 "삭제된 메시지입니다"로 바꾼다(재생성 없이)."""
+        self._message.deleted = True
+        if self._text_label is not None:
+            text_color = self._mine_text if self._is_mine else self._other_text
+            self._text_label.setText("삭제된 메시지입니다")
+            self._text_label.setStyleSheet(
+                f"color: {text_color}; background: transparent; font-style: italic;"
+            )
+        if self._edited_label is not None:
+            self._edited_label.hide()
+        if self._bubble_frame is not None:
+            self._bubble_frame.setContextMenuPolicy(Qt.NoContextMenu)
+
+    def update_text(self, new_text: str) -> None:
+        """텍스트를 새 내용으로 교체하고 "(수정됨)" 표시를 붙인다."""
+        self._message.text = new_text
+        self._message.edited_at = time.time()
+        if self._text_label is not None:
+            self._text_label.setText(new_text)
+        if self._edited_label is None and self._bubble_layout is not None:
+            text_color = self._mine_text if self._is_mine else self._other_text
+            edited_label = QLabel("(수정됨)")
+            edited_label.setStyleSheet(
+                f"color: {text_color}; background: transparent; font-size: 10px;"
+            )
+            # meta_row(시간/읽음 표시) 바로 앞에 삽입한다.
+            self._bubble_layout.insertWidget(self._bubble_layout.count() - 1, edited_label)
+            self._edited_label = edited_label
+        elif self._edited_label is not None:
+            self._edited_label.show()
 
     def update_progress(self, done: int, total: int) -> None:
         """파일 전송/수신 진행률 갱신 (0%~100%). 완료 시 바를 숨긴다."""
