@@ -244,12 +244,33 @@ class SettingsDialog(QDialog):
     # ------------------------------------------------------------------
     def _on_check_update(self) -> None:
         if not update_checker.is_git_checkout():
-            QMessageBox.information(
+            from dochat import release_checker
+
+            self._update_button.setEnabled(False)
+            self._update_button.setText("확인 중...")
+            QApplication.processEvents()
+            try:
+                result = release_checker.check_for_new_release()
+            finally:
+                self._update_button.setEnabled(True)
+                self._update_button.setText("업데이트 확인")
+
+            if result.get("error"):
+                QMessageBox.warning(self, "업데이트 확인 실패", result["error"])
+                return
+
+            if not result.get("has_update"):
+                QMessageBox.information(self, "업데이트 확인", "최신 버전입니다.")
+                return
+
+            answer = QMessageBox.question(
                 self,
                 "업데이트 확인",
-                "패키지된 실행 파일에서는 자동 업데이트를 지원하지 않습니다.\n"
-                "GitHub 릴리스 페이지에서 최신 버전을 받아주세요.",
+                f"새 버전이 있습니다 (최신 커밋: {result['remote_short']}).\n"
+                "GitHub 릴리스/빌드 페이지에서 최신 실행 파일을 받으시겠습니까?",
             )
+            if answer == QMessageBox.Yes:
+                QDesktopServices.openUrl(QUrl(release_checker.releases_page_url()))
             return
 
         self._update_button.setEnabled(False)
