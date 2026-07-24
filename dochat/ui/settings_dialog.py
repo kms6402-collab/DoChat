@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -138,6 +139,32 @@ class SettingsDialog(QDialog):
         color_hint.setWordWrap(True)
         form.addRow("", color_hint)
 
+        # --- 실시간 미리보기 -------------------------------------------
+        # 테마/색을 바꿀 때마다 실제 말풍선처럼 생긴 라벨을 즉시 갱신해서
+        # 저장 후 대화창을 열어보지 않아도 결과를 바로 확인할 수 있게 한다.
+        preview_frame = QFrame()
+        preview_frame.setObjectName("ThemePreviewFrame")
+        preview_frame.setFrameShape(QFrame.StyledPanel)
+        preview_layout = QVBoxLayout(preview_frame)
+        preview_layout.setSpacing(6)
+        preview_layout.setContentsMargins(10, 10, 10, 10)
+
+        other_row = QHBoxLayout()
+        self._preview_other_label = QLabel("상대방: 네, 반갑습니다")
+        self._preview_other_label.setWordWrap(True)
+        other_row.addWidget(self._preview_other_label)
+        other_row.addStretch(1)
+        preview_layout.addLayout(other_row)
+
+        mine_row = QHBoxLayout()
+        self._preview_mine_label = QLabel("나: 안녕하세요!")
+        self._preview_mine_label.setWordWrap(True)
+        mine_row.addStretch(1)
+        mine_row.addWidget(self._preview_mine_label)
+        preview_layout.addLayout(mine_row)
+
+        form.addRow("미리보기", preview_frame)
+
         self._update_color_buttons()
 
         # --- 보안 키(암호화) -----------------------------------------------
@@ -216,6 +243,16 @@ class SettingsDialog(QDialog):
         )
         self._other_color_button.setStyleSheet(
             f"background-color: {other_color}; color: {theme.other_text};"
+        )
+
+        # 실제 말풍선처럼 생긴 미리보기 라벨도 함께 갱신한다.
+        self._preview_mine_label.setStyleSheet(
+            f"background-color: {mine_color}; color: {theme.mine_text}; "
+            "border-radius: 12px; padding: 8px 12px;"
+        )
+        self._preview_other_label.setStyleSheet(
+            f"background-color: {other_color}; color: {theme.other_text}; "
+            "border-radius: 12px; padding: 8px 12px;"
         )
 
     def _on_pick_mine_color(self) -> None:
