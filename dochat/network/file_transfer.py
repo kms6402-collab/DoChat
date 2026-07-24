@@ -24,7 +24,7 @@ class OutgoingFileTransfer:
     ``in_flight``에 남아있고, ACK를 받으면 거기서 빠지며 ``acked_count``가 늘어난다.
     """
 
-    def __init__(self, file_path: str, file_id: str | None = None):
+    def __init__(self, file_path: str, file_id: str | None = None, preacked: set[int] | None = None):
         self.file_path = Path(file_path)
         self.file_id = file_id or str(uuid.uuid4())
         self.filename = self.file_path.name
@@ -45,10 +45,19 @@ class OutgoingFileTransfer:
         self.total_chunks = len(self.chunks)
         self.next_to_send = 0  # 다음에 "새로" 발송할 청크 인덱스
         self.in_flight: set[int] = set()  # 발송했지만 아직 ACK 못 받은 인덱스들
-        self.acked_count = 0  # ACK 받은 청크 수 (진행률 표시용)
+
+        # 재개(resume) 전송: 상대가 이미 갖고 있다고 알려온 인덱스들은 건너뛴다.
+        # 범위를 벗어난 값(파일이 바뀌었거나 total_chunks가 달라진 경우 등)은 무시한다.
+        self._skip: set[int] = {i for i in (preacked or ()) if 0 <= i < self.total_chunks}
+        self.acked_count = len(self._skip)  # ACK 받은(또는 이미 확인된) 청크 수 (진행률 표시용)
 
     def dispatch_next(self) -> tuple[int, bytes] | None:
-        """다음 청크를 in-flight로 표시하고 (index, data)를 돌려준다. 더 없으면 None."""
+        """다음 청크를 in-flight로 표시하고 (index, data)를 돌려준다. 더 없으면 None.
+
+        이미 확인된(preacked) 인덱스는 건너뛴다.
+        """
+        while self.next_to_send in self._skip:
+            self.next_to_send += 1
         if self.next_to_send >= self.total_chunks:
             return None
         index = self.next_to_send
@@ -63,7 +72,10 @@ class OutgoingFileTransfer:
 
     @property
     def has_pending_dispatch(self) -> bool:
-        return self.next_to_send < self.total_chunks
+        i = self.next_to_send
+        while i in self._skip:
+            i += 1
+        return i < self.total_chunks
 
     @property
     def is_fully_acked(self) -> bool:
@@ -85,6 +97,7 @@ class IncomingFileTransfer:
         mime_type: str,
         total_chunks: int,
         conversation_id: str,
+        resume_from: dict | None = None,
     ):
         self.file_id = file_id
         self.filename = filename
@@ -92,14 +105,27 @@ class IncomingFileTransfer:
         self.mime_type = mime_type
         self.total_chunks = max(total_chunks, 1)
         self.conversation_id = conversation_id
-        self.received_chunks = 0
-        self._received_indices: set[int] = set()
 
-        config.RECEIVED_FILES_DIR.mkdir(parents=True, exist_ok=True)
-        self.tmp_path = config.RECEIVED_FILES_DIR / f"{file_id}.part"
-        with open(self.tmp_path, "wb") as f:
-            if size > 0:
-                f.truncate(size)
+        if resume_from is not None and Path(resume_from.get("tmp_path", "")).exists():
+            # 이어받기: 기존 임시(.part) 파일을 그대로 재사용하고, 이미 받은
+            # 인덱스들을 그대로 복원한다 (파일을 새로 만들지 않는다).
+            self.tmp_path = Path(resume_from["tmp_path"])
+            self._received_indices: set[int] = set(resume_from.get("received_indices") or [])
+            self.received_chunks = len(self._received_indices)
+        else:
+            # 신규 수신(또는 재개용 임시 파일이 사라진 경우) -> 새로 만든다.
+            self.received_chunks = 0
+            self._received_indices = set()
+            config.RECEIVED_FILES_DIR.mkdir(parents=True, exist_ok=True)
+            self.tmp_path = config.RECEIVED_FILES_DIR / f"{file_id}.part"
+            with open(self.tmp_path, "wb") as f:
+                if size > 0:
+                    f.truncate(size)
+
+    @property
+    def received_indices(self) -> list[int]:
+        """지금까지 받은 청크 인덱스 목록(정렬됨). 재개 정보 저장용."""
+        return sorted(self._received_indices)
 
     def write_chunk(self, index: int, offset: int, data: bytes) -> bool:
         """오프셋에 맞춰 청크를 기록한다. 새로 받은 청크면 True, 중복이면 False."""
@@ -125,8 +151,13 @@ class IncomingFileTransfer:
         shutil.move(str(self.tmp_path), str(final_path))
         return str(final_path)
 
-    def abort(self) -> None:
-        """실패 시 임시 파일을 정리한다."""
+    def abort(self, keep_partial: bool = False) -> None:
+        """실패/취소 시 임시 파일을 정리한다.
+
+        ``keep_partial=True``면 삭제하지 않고 그대로 남겨둔다(추후 이어받기용).
+        """
+        if keep_partial:
+            return
         try:
             self.tmp_path.unlink(missing_ok=True)
         except OSError:

@@ -448,6 +448,7 @@ class ChatEngine(QObject):
                 timestamp=time.time(),
                 conversation_id=conversation_id,
                 direction="out",
+                conversation_type=conversation_type,
             )
             self.storage.add_file_record(record)
             QTimer.singleShot(0, lambda: self.file_completed.emit(file_id, False))
@@ -463,6 +464,7 @@ class ChatEngine(QObject):
             timestamp=time.time(),
             conversation_id=conversation_id,
             direction="out",
+            conversation_type=conversation_type,
         )
         self.storage.add_file_record(record)
 
@@ -615,6 +617,7 @@ class ChatEngine(QObject):
             MsgType.FILE_META: self._handle_file_meta,
             MsgType.FILE_CHUNK: self._handle_file_chunk,
             MsgType.FILE_CANCEL: self._handle_file_cancel,
+            MsgType.FILE_RESUME_REQUEST: self._handle_file_resume_request,
             MsgType.READ_RECEIPT: self._handle_read_receipt,
         }.get(packet.msg_type)
         if handler:
@@ -813,6 +816,7 @@ class ChatEngine(QObject):
             timestamp=time.time(),
             conversation_id=conversation_id,
             direction="in",
+            conversation_type=conversation_type,
         )
         self.storage.add_file_record(record)
         self.file_progress.emit(file_id, 0, transfer.total_chunks, "in")
@@ -880,9 +884,9 @@ class ChatEngine(QObject):
         # 내가 받는 중이던 파일 -> 상대가 발신을 취소한 경우
         transfer = self._incoming.pop(file_id, None)
         if transfer is not None:
-            transfer.abort()
-            self._incoming_conv_type.pop(file_id, None)
-            self._incoming_sender_addr.pop(file_id, None)
+            conversation_type = self._incoming_conv_type.pop(file_id, None) or ConversationType.DIRECT
+            sender_addr = self._incoming_sender_addr.pop(file_id, None)
+            self._preserve_or_discard_incoming(transfer, conversation_type, sender_addr)
             self.storage.update_file_status(file_id, FileStatus.CANCELLED)
             self.file_cancelled.emit(file_id, "in")
 
@@ -911,14 +915,19 @@ class ChatEngine(QObject):
         self.file_cancelled.emit(file_id, "out")
 
     def cancel_incoming_file(self, file_id: str) -> None:
-        """내가 받는 중인 파일 전송을 취소한다 (임시 파일 정리 + 상대에게 통지)."""
+        """내가 받는 중인 파일 전송을 취소한다.
+
+        이미 받은 청크가 하나라도 있으면 임시 파일을 지우지 않고 보존해
+        나중에 이어받기(``resume_incoming_file``)를 할 수 있도록 storage에
+        재개 정보를 남긴다. 하나도 받지 못했으면 재개할 것이 없으므로 완전히 삭제한다.
+        """
         transfer = self._incoming.pop(file_id, None)
         if transfer is None:
             return
 
-        transfer.abort()
-        self._incoming_conv_type.pop(file_id, None)
+        conversation_type = self._incoming_conv_type.pop(file_id, None) or ConversationType.DIRECT
         sender_addr = self._incoming_sender_addr.pop(file_id, None)
+        self._preserve_or_discard_incoming(transfer, conversation_type, sender_addr)
 
         if sender_addr is not None:
             packet = Packet(
@@ -931,6 +940,120 @@ class ChatEngine(QObject):
 
         self.storage.update_file_status(file_id, FileStatus.CANCELLED)
         self.file_cancelled.emit(file_id, "in")
+
+    def _preserve_or_discard_incoming(
+        self,
+        transfer: IncomingFileTransfer,
+        conversation_type: str,
+        sender_addr: tuple[str, int] | None,
+    ) -> None:
+        """수신 중이던 전송이 취소될 때, 받은 게 있으면 재개 정보를 저장하고 임시
+        파일을 보존한다. 받은 게 하나도 없으면 임시 파일을 완전히 삭제한다."""
+        keep_partial = transfer.received_chunks > 0
+        transfer.abort(keep_partial=keep_partial)
+
+        if not keep_partial:
+            self.storage.delete_resumable_download(transfer.file_id)
+            return
+
+        sender_ip, sender_port = sender_addr if sender_addr is not None else ("", 0)
+        sender_contact_id = self._contact_id_for_addr(sender_ip, sender_port) if sender_addr else ""
+
+        self.storage.save_resumable_download(
+            file_id=transfer.file_id,
+            filename=transfer.filename,
+            size=transfer.size,
+            mime_type=transfer.mime_type,
+            total_chunks=transfer.total_chunks,
+            received_indices=transfer.received_indices,
+            tmp_path=str(transfer.tmp_path),
+            conversation_id=transfer.conversation_id,
+            conversation_type=conversation_type,
+            sender_contact_id=sender_contact_id or "",
+            sender_ip=sender_ip,
+            sender_port=sender_port,
+        )
+
+    def resume_incoming_file(self, file_id: str) -> None:
+        """중단됐던 다운로드를 이어받는다.
+
+        storage에 저장된 재개 정보로 ``IncomingFileTransfer``를 기존 임시 파일을
+        재사용하는 모드로 복원하고, 발신자에게 이미 받은 인덱스 목록을 담아
+        ``FILE_RESUME_REQUEST``를 보내 나머지 청크만 다시 전송받는다.
+        """
+        info = self.storage.get_resumable_download(file_id)
+        if info is None:
+            return
+
+        transfer = IncomingFileTransfer(
+            file_id=info["file_id"],
+            filename=info["filename"],
+            size=info["size"],
+            mime_type=info["mime_type"],
+            total_chunks=info["total_chunks"],
+            conversation_id=info["conversation_id"],
+            resume_from=info,
+        )
+        self._incoming[file_id] = transfer
+        self._incoming_conv_type[file_id] = info["conversation_type"]
+        self._incoming_sender_addr[file_id] = (info["sender_ip"], info["sender_port"])
+
+        packet = Packet(
+            msg_type=MsgType.FILE_RESUME_REQUEST,
+            seq=0,
+            sender_id=self.client_id,
+            payload={"file_id": file_id, "have_indices": transfer.received_indices},
+        )
+        self.socket.send_reliable(packet, (info["sender_ip"], info["sender_port"]))
+
+        self.storage.delete_resumable_download(file_id)
+        self.storage.update_file_status(file_id, FileStatus.RECEIVING)
+        self.file_progress.emit(file_id, transfer.received_chunks, transfer.total_chunks, "in")
+
+    def _handle_file_resume_request(self, packet: Packet, addr: tuple[str, int]) -> None:
+        """상대가 중단됐던 다운로드의 재개(``FILE_RESUME_REQUEST``)를 요청해왔다.
+
+        내가 원본을 보유한 발신자인 경우에만 처리한다: 이미 상대가 갖고 있다고
+        알려온 인덱스(``have_indices``)는 다시 보내지 않고, 나머지 청크만
+        이어서 전송한다.
+        """
+        payload = packet.payload or {}
+        file_id = payload.get("file_id")
+        if not file_id:
+            return
+
+        record = self.storage.get_file_record(file_id)
+        if record is None or record.direction != "out":
+            return
+        if not record.local_path or not os.path.exists(record.local_path):
+            return
+
+        have_indices = {int(i) for i in (payload.get("have_indices") or [])}
+
+        try:
+            transfer = OutgoingFileTransfer(record.local_path, file_id=file_id, preacked=have_indices)
+        except OSError:
+            return
+
+        contact_id = self._resolve_contact(packet.sender_id, addr[0], addr[1])
+        contact = self.peer_manager.get_contact(contact_id)
+        if contact is None:
+            return
+
+        session = {
+            "transfer": transfer,
+            "contact": contact,
+            "conversation_id": record.conversation_id,
+            "conversation_type": record.conversation_type,
+            "pending_seqs": set(),
+        }
+        self._outgoing[(file_id, contact.id)] = session
+
+        if transfer.is_fully_acked:
+            # 상대가 이미 전부 받은 상태(예: 마지막 청크만 놓쳤던 경우) -> 바로 완료 처리.
+            self._finish_outgoing(session, True)
+        else:
+            self._pump_send_window(session)
 
     # ------------------------------------------------------------------
     # 연락처 식별 (원격 CLIENT_ID/주소 <-> 로컬 Contact.id)
@@ -955,6 +1078,13 @@ class ChatEngine(QObject):
         self.peer_manager.contacts[contact.id] = contact
         self._remote_to_local[remote_id] = contact.id
         return contact.id
+
+    def _contact_id_for_addr(self, ip: str, port: int) -> str | None:
+        """(ip, port)와 일치하는 기존 연락처의 로컬 id를 찾는다. 없으면 None."""
+        for contact in self.peer_manager.all_contacts():
+            if contact.ip == ip and contact.port == port:
+                return contact.id
+        return None
 
     @staticmethod
     def _detect_local_ip() -> str:

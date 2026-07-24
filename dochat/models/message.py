@@ -47,3 +47,4 @@ class FileRecord:
     timestamp: float
     conversation_id: str
     direction: str  # "in" | "out"
+    conversation_type: str = ConversationType.DIRECT  # ConversationType.DIRECT | GROUP (재개 시 필요)
