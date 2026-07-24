@@ -201,6 +201,17 @@ class SettingsDialog(QDialog):
             self._autostart_check.setToolTip("패키지된 Windows 실행 파일에서만 사용할 수 있습니다.")
         form.addRow("", self._autostart_check)
 
+        # --- 네트워크 진단 ---------------------------------------------
+        diagnostic_row = QHBoxLayout()
+        diagnostic_hint = QLabel("연결 문제가 있을 때 상대방 IP:포트로 도달 가능한지 확인합니다.")
+        diagnostic_hint.setObjectName("DialogHint")
+        diagnostic_hint.setWordWrap(True)
+        self._diagnostic_button = QPushButton("🔌 네트워크 진단")
+        self._diagnostic_button.clicked.connect(self._on_open_network_diagnostic)
+        diagnostic_row.addWidget(diagnostic_hint, 1)
+        diagnostic_row.addWidget(self._diagnostic_button)
+        root.addLayout(diagnostic_row)
+
         # --- 버전 정보 / 업데이트 -----------------------------------------
         version_row = QHBoxLayout()
         version_label = QLabel(f"버전: {config.get_version_string()}")
@@ -285,6 +296,12 @@ class SettingsDialog(QDialog):
         self._mine_color = ""
         self._other_color = ""
         self._update_color_buttons()
+
+    # ------------------------------------------------------------------
+    def _on_open_network_diagnostic(self) -> None:
+        from dochat.ui.network_diagnostic_dialog import NetworkDiagnosticDialog  # 순환참조 방지를 위한 지연 import
+
+        NetworkDiagnosticDialog(self._chat_engine, parent=self).exec()
 
     # ------------------------------------------------------------------
     def _on_check_update(self) -> None:
