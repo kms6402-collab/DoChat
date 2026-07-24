@@ -268,8 +268,25 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
     def _apply_stylesheet(self) -> None:
-        if _STYLE_PATH.exists():
-            self.setStyleSheet(_STYLE_PATH.read_text(encoding="utf-8"))
+        """채팅 테마 설정을 앱 전체(모든 다이얼로그 포함)에 적용한다.
+
+        QApplication 전체에 스타일시트를 걸어야 설정 창/파일함/그룹 관리 등
+        다른 다이얼로그들도 테마가 일관되게 반영된다.
+        """
+        try:
+            from dochat.ui import themes
+
+            stylesheet = themes.render_stylesheet(self.storage)
+        except Exception:
+            # 방어적 폴백: 테마 렌더링이 어떤 이유로든 실패하면 기존 정적
+            # QSS 파일을 그대로 사용한다(이론상 일어나지 않아야 한다).
+            stylesheet = _STYLE_PATH.read_text(encoding="utf-8") if _STYLE_PATH.exists() else ""
+
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(stylesheet)
+        else:  # pragma: no cover - QApplication이 없는 극히 예외적인 상황 대비
+            self.setStyleSheet(stylesheet)
 
     def _connect_signals(self) -> None:
         self._new_contact_button.clicked.connect(self._on_new_contact_clicked)
@@ -381,6 +398,7 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self._notify_sound = self.storage.get_setting("notify_sound", "1") == "1"
             self._notify_popup = self.storage.get_setting("notify_popup", "1") == "1"
+            self._apply_stylesheet()
             self._update_header()
             if self._current_conversation_id is not None:
                 self.chat_view.set_conversation(self._current_conversation_id, self._current_conversation_type, self.chat_engine.client_id)
