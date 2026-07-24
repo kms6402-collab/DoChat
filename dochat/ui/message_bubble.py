@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dochat.config import FILE_CHUNK_SIZE
 from dochat.models.message import FileRecord, FileStatus, MessageType
 from dochat.models.message import Message
 from dochat.ui.themes import get_theme_colors
@@ -39,6 +40,51 @@ def _human_size(size: int) -> str:
             return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
         n /= 1024
     return f"{n:.1f} GB"
+
+
+def _human_speed(bytes_per_sec: float) -> str:
+    """바이트/초 값을 "1.2 MB/s" 같은 사람이 읽기 좋은 형식으로 변환한다."""
+    return f"{_human_size(int(max(0, bytes_per_sec)))}/s"
+
+
+def _human_eta(seconds: float) -> str:
+    """남은 초를 "약 12초 남음" 같은 형식으로 변환한다."""
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"약 {seconds}초 남음"
+    minutes, sec = divmod(seconds, 60)
+    if minutes < 60:
+        return f"약 {minutes}분 {sec}초 남음"
+    hours, minutes = divmod(minutes, 60)
+    return f"약 {hours}시간 {minutes}분 남음"
+
+
+def _format_speed_and_eta(
+    history: list[tuple[float, int]], total: int, chunk_size: int = FILE_CHUNK_SIZE
+) -> str:
+    """진행률 히스토리(시각, done_chunks)로부터 "속도 · 남은시간" 문자열을 만든다.
+
+    히스토리가 2개 미만이거나 유효한 속도를 계산할 수 없으면 빈 문자열을 반환한다.
+    순수 함수로 분리해 위젯 없이도 단위 테스트하듯 검증할 수 있게 했다.
+    """
+    if len(history) < 2 or total <= 0:
+        return ""
+
+    oldest_t, oldest_done = history[0]
+    newest_t, newest_done = history[-1]
+    dt = newest_t - oldest_t
+    dchunks = newest_done - oldest_done
+    if dt <= 0 or dchunks <= 0:
+        return ""
+
+    chunks_per_sec = dchunks / dt
+    bytes_per_sec = chunks_per_sec * chunk_size
+    speed_text = _human_speed(bytes_per_sec)
+
+    remaining_chunks = max(0, total - newest_done)
+    remaining_sec = remaining_chunks / chunks_per_sec
+    eta_text = _human_eta(remaining_sec)
+    return f"{speed_text} · {eta_text}"
 
 
 class _ClickableFrame(QFrame):
@@ -83,6 +129,8 @@ class MessageBubble(QWidget):
         self._cancelled_label: QLabel | None = None
         self._resume_button: QPushButton | None = None
         self._read_label: QLabel | None = None
+        self._speed_label: QLabel | None = None
+        self._progress_history: list[tuple[float, int]] = []
 
         # 채팅 테마/커스텀 색 반영: 정적 QSS의 objectName 규칙 대신 실행 중
         # 계산된 색상을 인라인 스타일시트로 적용해 즉시 반영되도록 한다.
@@ -187,6 +235,7 @@ class MessageBubble(QWidget):
                 image_label = QLabel()
                 image_label.setPixmap(pixmap)
                 image_label.setCursor(Qt.PointingHandCursor)
+                image_label.mousePressEvent = lambda event: self._open_lightbox()
                 layout.addWidget(image_label)
 
         name_row = QHBoxLayout()
@@ -218,6 +267,11 @@ class MessageBubble(QWidget):
             bar.setFixedHeight(8)
             layout.addWidget(bar)
             self._progress_bar = bar
+
+            speed_label = QLabel("")
+            speed_label.setStyleSheet("font-size: 10px; color: #9AA1AC; background: transparent;")
+            layout.addWidget(speed_label)
+            self._speed_label = speed_label
 
             cancel_row = QHBoxLayout()
             cancel_row.setContentsMargins(0, 0, 0, 0)
@@ -298,6 +352,20 @@ class MessageBubble(QWidget):
         if path and os.path.exists(path):
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
+    def _open_lightbox(self) -> None:
+        """이미지 썸네일 단일 클릭 시 확대보기(라이트박스)를 띄운다.
+
+        기존의 더블클릭 시 ``_open_file()``(OS 기본 뷰어로 열기) 동작은 그대로 유지된다.
+        """
+        if not self._file_record:
+            return
+        path = self._file_record.local_path
+        if not path or not os.path.exists(path):
+            return
+        from dochat.ui.image_lightbox import ImageLightboxDialog  # 순환참조 방지를 위한 지연 import
+
+        ImageLightboxDialog(path, parent=self).show()
+
     # ------------------------------------------------------------------
     @property
     def file_id(self) -> str | None:
@@ -314,11 +382,22 @@ class MessageBubble(QWidget):
             self._read_label.setVisible(True)
 
     def update_progress(self, done: int, total: int) -> None:
-        """파일 전송/수신 진행률 갱신 (0%~100%). 완료 시 바를 숨긴다."""
+        """파일 전송/수신 진행률 갱신 (0%~100%). 완료 시 바를 숨긴다.
+
+        전송 속도/예상 남은 시간도 함께 갱신한다(백엔드 변경 없이 진행률 콜백이
+        오는 시간 간격과 청크 수로 클라이언트에서 직접 추정).
+        """
         if self._progress_bar is None:
             return
         pct = 0 if total <= 0 else int(done * 100 / total)
         self._progress_bar.setValue(min(100, max(0, pct)))
+
+        now = time.time()
+        self._progress_history.append((now, done))
+        self._progress_history = self._progress_history[-10:]
+
+        if self._speed_label is not None:
+            self._speed_label.setText(_format_speed_and_eta(self._progress_history, total))
 
     def mark_completed(self, success: bool = True) -> None:
         """전송/수신 완료 시 진행률 바/취소 버튼을 숨기고, 성공이면 열기/폴더에서 보기
@@ -327,6 +406,8 @@ class MessageBubble(QWidget):
             self._progress_bar.hide()
         if self._cancel_button is not None:
             self._cancel_button.hide()
+        if self._speed_label is not None:
+            self._speed_label.hide()
         if success and self._file_record is not None:
             self._file_record.status = FileStatus.COMPLETED
             if self._file_action_row is None and self._bubble_layout is not None:
@@ -357,6 +438,8 @@ class MessageBubble(QWidget):
             self._progress_bar.hide()
         if self._cancel_button is not None:
             self._cancel_button.hide()
+        if self._speed_label is not None:
+            self._speed_label.hide()
         if self._file_record is not None:
             self._file_record.status = FileStatus.CANCELLED
         self._resumable = resumable or self._resumable
