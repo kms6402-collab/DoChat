@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 
 APP_NAME = "DoChat"
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 
 try:
     # 패키징 스크립트/CI가 빌드 직전에 생성하는 파일. 소스에서 바로 실행하는

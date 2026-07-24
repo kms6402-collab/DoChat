@@ -170,11 +170,54 @@ def _build_update_script(new_exe_path: Path, current_exe: Path) -> str:
     return "\r\n".join(lines)
 
 
-def apply_self_update(download_url: str) -> tuple[bool, str]:
+def _verify_downloaded_exe(path: Path, expected_size: int | None) -> str | None:
+    """다운로드된 exe가 온전한지 검증한다. 문제가 있으면 오류 메시지를,
+    정상이면 ``None``을 반환한다.
+
+    "Failed to load Python DLL" 팝업과 함께 재시작에 실패하던 문제의
+    원인이었다: 다운로드가 중간에 끊겨도 ``urlopen().read()``가 빈 바이트를
+    반환하면 정상 종료로 오인해, 잘리거나 손상된 exe를 그대로 기존 실행
+    파일 자리에 옮겨 심어버렸다. 옮기기 전에 반드시 다음을 확인한다:
+
+    1. 파일 크기가 GitHub 릴리스 자산의 크기(``expected_size``)와 정확히
+       일치하는지 (알 수 없으면 이 검사는 건너뜀)
+    2. Windows PE 실행 파일의 매직 바이트("MZ")로 시작하는지 — HTML 오류
+       페이지 등 완전히 다른 내용이 저장된 경우까지 잡아낸다.
+    """
+    if not path.exists():
+        return "다운로드한 파일을 찾을 수 없습니다."
+
+    actual_size = path.stat().st_size
+    if actual_size == 0:
+        return "다운로드한 파일이 비어 있습니다."
+    if expected_size and actual_size != expected_size:
+        return (
+            f"다운로드가 손상되었습니다 (예상 크기 {expected_size:,}바이트, "
+            f"실제 {actual_size:,}바이트). 네트워크 연결을 확인한 뒤 다시 시도해 주세요."
+        )
+
+    try:
+        with open(path, "rb") as f:
+            header = f.read(2)
+    except OSError as exc:
+        return f"다운로드한 파일을 확인하지 못했습니다: {exc}"
+    if header != b"MZ":
+        return "다운로드한 파일이 올바른 실행 파일이 아닙니다. 다시 시도해 주세요."
+
+    return None
+
+
+def apply_self_update(download_url: str, expected_size: int | None = None) -> tuple[bool, str]:
     """새 exe를 내려받아 현재 실행 파일을 자동으로 교체·재시작하도록 예약한다.
 
     성공 시 True를 반환하며, 호출한 쪽은 곧이어 앱을 종료해야 한다
     (교체 스크립트가 현재 프로세스 종료를 기다리기 때문).
+
+    ``expected_size``는 ``check_for_self_update()``가 반환한 GitHub 릴리스
+    자산의 크기(바이트)다. 넘겨주면 다운로드 무결성 검증에 사용된다
+    (``_verify_downloaded_exe`` 참고) — 이게 없으면 네트워크가 중간에
+    끊겨도 조용히 손상된 exe로 교체해버려 "Failed to load Python DLL"
+    오류로 재시작에 실패하는 문제가 있었다.
     """
     if not is_supported():
         return False, "이 실행 환경에서는 자동 업데이트를 지원하지 않습니다."
@@ -190,18 +233,34 @@ def apply_self_update(download_url: str) -> tuple[bool, str]:
     try:
         req = urllib.request.Request(download_url, headers={"User-Agent": "DoChat-SelfUpdater"})
         with urllib.request.urlopen(req, timeout=60) as resp, open(new_exe_path, "wb") as out:
+            # 서버가 알려준 Content-Length와 실제로 받은 바이트 수를 직접
+            # 대조한다 (expected_size가 없거나 부정확한 경우에 대비한
+            # 2차 방어선).
+            content_length = resp.headers.get("Content-Length")
+            expected_from_header = int(content_length) if content_length and content_length.isdigit() else None
+
+            written = 0
             while True:
                 chunk = resp.read(1024 * 256)
                 if not chunk:
                     break
                 out.write(chunk)
+                written += len(chunk)
+
+        if expected_from_header is not None and written != expected_from_header:
+            new_exe_path.unlink(missing_ok=True)
+            return False, (
+                f"다운로드가 중간에 끊겼습니다 (받은 크기 {written:,}바이트 / "
+                f"예상 {expected_from_header:,}바이트). 다시 시도해 주세요."
+            )
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
         new_exe_path.unlink(missing_ok=True)
         return False, f"새 버전 다운로드에 실패했습니다: {exc}"
 
-    if not new_exe_path.exists() or new_exe_path.stat().st_size == 0:
+    verify_error = _verify_downloaded_exe(new_exe_path, expected_size)
+    if verify_error is not None:
         new_exe_path.unlink(missing_ok=True)
-        return False, "다운로드한 파일이 비어 있습니다."
+        return False, verify_error
 
     bat_content = _build_update_script(new_exe_path, current_exe)
     try:

@@ -361,7 +361,9 @@ class SettingsDialog(QDialog):
         self._update_button.setEnabled(False)
         self._update_button.setText("다운로드 중...")
         QApplication.processEvents()
-        success, message = self_updater.apply_self_update(result["download_url"])
+        success, message = self_updater.apply_self_update(
+            result["download_url"], expected_size=result.get("size")
+        )
 
         if success:
             QMessageBox.information(self, "업데이트", message)
