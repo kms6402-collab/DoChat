@@ -17,23 +17,66 @@ from dochat.models.contact import Contact, Group
 from dochat.models.message import ConversationType, MessageType
 from dochat.models.storage import Storage
 
-ONLINE_COLOR = "#34C77B"
-OFFLINE_COLOR = "#B7BBC2"
+ONLINE_COLOR = "#22C55E"
+OFFLINE_COLOR = "#9CA3AF"
+
+AVATAR_SIZE = 36
+STATUS_DOT_SIZE = 12
+# 아바타 배지를 담는 컨테이너는 상태 점이 아바타 우측 하단 모서리 밖으로
+# 살짝 걸치도록(overlay) 아바타보다 약간 더 크게 잡는다.
+_BADGE_PAD = 4
+BADGE_CONTAINER_SIZE = AVATAR_SIZE + _BADGE_PAD
 
 
 class _StatusDot(QLabel):
-    """온라인 상태를 나타내는 작은 원."""
+    """온라인 상태를 뚜렷하게 보여주는 배지형 원 (아바타 모서리에 겹쳐 표시)."""
 
     def __init__(self, online: bool, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setFixedSize(9, 9)
+        self.setFixedSize(STATUS_DOT_SIZE, STATUS_DOT_SIZE)
         self.set_online(online)
 
     def set_online(self, online: bool) -> None:
         color = ONLINE_COLOR if online else OFFLINE_COLOR
         self.setStyleSheet(
-            f"background-color: {color}; border-radius: 4px; border: none;"
+            f"background-color: {color}; border-radius: {STATUS_DOT_SIZE // 2}px;"
+            f"border: 2px solid #FFFFFF;"
         )
+
+
+class _AvatarBadge(QWidget):
+    """원형 아바타(이니셜)와, 1:1 연락처의 경우 우측 하단에 겹치는 온라인 상태 점을 담는 컨테이너.
+
+    카카오톡/슬랙류 메신저처럼 상태 점을 아바타 위에 오버레이하는 방식을 사용해
+    이름 옆 텍스트 라인이 아니라 시각적으로 가장 먼저 눈에 띄는 위치에서
+    온라인/오프라인을 구분할 수 있게 한다.
+    """
+
+    def __init__(
+        self,
+        title: str,
+        is_group: bool,
+        online: bool | None,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.setFixedSize(BADGE_CONTAINER_SIZE, BADGE_CONTAINER_SIZE)
+
+        self.avatar = QLabel(title[:1].upper() if title else "?", self)
+        self.avatar.setGeometry(0, 0, AVATAR_SIZE, AVATAR_SIZE)
+        self.avatar.setAlignment(Qt.AlignCenter)
+        avatar_bg = "#3B6FE0" if is_group else "#8A8F98"
+        self.avatar.setStyleSheet(
+            f"background-color: {avatar_bg}; color: #FFFFFF; border-radius: {AVATAR_SIZE // 2}px;"
+            f"font-weight: 600; font-size: 14px;"
+        )
+
+        self.status_dot: _StatusDot | None = None
+        if not is_group:
+            self.status_dot = _StatusDot(bool(online), self)
+            offset = BADGE_CONTAINER_SIZE - STATUS_DOT_SIZE
+            self.status_dot.move(offset, offset)
+            self.status_dot.raise_()
 
 
 class _ConversationRow(QWidget):
@@ -52,16 +95,9 @@ class _ConversationRow(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(10)
 
-        # 아바타 자리: 원형 배경 + 이니셜
-        avatar = QLabel(title[:1].upper() if title else "?")
-        avatar.setFixedSize(36, 36)
-        avatar.setAlignment(Qt.AlignCenter)
-        avatar_bg = "#3B6FE0" if is_group else "#8A8F98"
-        avatar.setStyleSheet(
-            f"background-color: {avatar_bg}; color: #FFFFFF; border-radius: 18px;"
-            f"font-weight: 600; font-size: 14px;"
-        )
-        layout.addWidget(avatar)
+        # 아바타 + 온라인 상태 배지 (1:1 연락처는 우측 하단에 상태 점이 겹쳐 보인다)
+        self._avatar_badge = _AvatarBadge(title, is_group, online)
+        layout.addWidget(self._avatar_badge)
 
         text_col = QVBoxLayout()
         text_col.setSpacing(2)
@@ -72,10 +108,16 @@ class _ConversationRow(QWidget):
         title_label.setStyleSheet("font-weight: 600; font-size: 13px; background: transparent;")
         title_row.addWidget(title_label)
 
-        self.status_dot: _StatusDot | None = None
+        # 상태 점은 아바타 위에 겹쳐 표시하지만, 온라인/오프라인 여부를
+        # 텍스트로도 짧게 병기해 색맹 사용자나 작은 화면에서도 명확히 구분되게 한다.
+        self.presence_label: QLabel | None = None
         if not is_group:
-            self.status_dot = _StatusDot(bool(online))
-            title_row.addWidget(self.status_dot)
+            self.presence_label = QLabel()
+            self.presence_label.setStyleSheet("font-size: 10px; font-weight: 600; background: transparent;")
+            self._update_presence_label(bool(online))
+            title_row.addWidget(self.presence_label)
+
+        self.status_dot: _StatusDot | None = self._avatar_badge.status_dot
         title_row.addStretch(1)
         text_col.addLayout(title_row)
 
@@ -109,6 +151,26 @@ class _ConversationRow(QWidget):
             return
         self.unread_badge.setText(str(count) if count <= 99 else "99+")
         self.unread_badge.show()
+
+    def _update_presence_label(self, online: bool) -> None:
+        if self.presence_label is None:
+            return
+        if online:
+            self.presence_label.setText("온라인")
+            self.presence_label.setStyleSheet(
+                f"color: {ONLINE_COLOR}; font-size: 10px; font-weight: 700; background: transparent;"
+            )
+        else:
+            self.presence_label.setText("오프라인")
+            self.presence_label.setStyleSheet(
+                f"color: {OFFLINE_COLOR}; font-size: 10px; font-weight: 600; background: transparent;"
+            )
+
+    def set_online(self, online: bool) -> None:
+        """온라인 상태 배지(아바타 위 점)와 텍스트 표시를 함께 갱신한다."""
+        if self.status_dot is not None:
+            self.status_dot.set_online(online)
+        self._update_presence_label(online)
 
 
 def _format_preview(storage: Storage, conversation_id: str) -> str:
@@ -156,7 +218,11 @@ class ConversationList(QWidget):
         self._list.clear()
         self._items.clear()
 
-        for contact in contacts:
+        # 온라인인 연락처를 먼저 보여줘서 한눈에 지금 대화 가능한 상대를 파악하기 쉽게 한다.
+        # (그룹은 정렬 대상이 아니며 항상 연락처 다음 섹션에 그대로 붙는다.)
+        sorted_contacts = sorted(contacts, key=lambda c: not c.online)
+
+        for contact in sorted_contacts:
             key = (contact.id, ConversationType.DIRECT)
             preview = _format_preview(storage, contact.id)
             row = _ConversationRow(contact.nickname, preview, is_group=False, online=contact.online)
@@ -238,8 +304,8 @@ class ConversationList(QWidget):
         if item is None:
             return
         row = self._list.itemWidget(item)
-        if isinstance(row, _ConversationRow) and row.status_dot is not None:
-            row.status_dot.set_online(online)
+        if isinstance(row, _ConversationRow):
+            row.set_online(online)
 
     def update_preview(self, conversation_id: str, conversation_type: str, storage: Storage) -> None:
         """특정 대화의 마지막 메시지 미리보기만 갱신한다."""
