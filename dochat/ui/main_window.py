@@ -104,7 +104,12 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _setup_tray_icon(self) -> None:
         """시스템 트레이 아이콘과 메뉴(열기/종료)를 구성한다."""
-        self.tray_icon = QSystemTrayIcon(QIcon(str(_tray_icon_path())), self)
+        icon = QIcon(str(_tray_icon_path()))
+        if icon.isNull():
+            # 패키징 문제 등으로 아이콘 파일을 찾지 못해도 트레이 알림 자체는
+            # 동작해야 하므로 OS/Qt 기본 아이콘으로 폴백한다.
+            icon = self.style().standardIcon(self.style().StandardPixmap.SP_ComputerIcon)
+        self.tray_icon = QSystemTrayIcon(icon, self)
         self.tray_icon.setToolTip(config.APP_NAME)
 
         tray_menu = QMenu(self)
@@ -190,6 +195,10 @@ class MainWindow(QMainWindow):
         self._settings_button.setObjectName("SidebarActionButton")
         header_layout.addWidget(self._settings_button)
 
+        self._notify_test_button = QPushButton("\U0001F514 알림 테스트")
+        self._notify_test_button.setObjectName("SidebarActionButton")
+        header_layout.addWidget(self._notify_test_button)
+
         sidebar_layout.addWidget(header)
 
         self.conversation_list = ConversationList()
@@ -258,6 +267,7 @@ class MainWindow(QMainWindow):
         self._file_room_button.clicked.connect(self._on_file_room_clicked)
         self._settings_button.clicked.connect(self._on_settings_clicked)
         self._quit_button.clicked.connect(self._on_quit_button_clicked)
+        self._notify_test_button.clicked.connect(self._on_notify_test_clicked)
 
         self.conversation_list.conversation_selected.connect(self._on_conversation_selected)
         self.conversation_list.conversation_selected.connect(self._on_conversation_selected_clear_badge)
@@ -369,6 +379,18 @@ class MainWindow(QMainWindow):
             return
         self._force_quit = True
         self.close()
+
+    def _on_notify_test_clicked(self) -> None:
+        """트레이 풍선 알림이 실제로 뜨는지 사용자가 바로 확인할 수 있도록 테스트 알림을 띄운다.
+
+        (테스트 목적이므로 창이 보이는 상태여도 isVisible() 체크 없이 무조건 표시한다.)
+        """
+        self.tray_icon.showMessage(
+            "DoChat",
+            "테스트 알림입니다. 이 메시지가 보이면 알림이 정상 동작하는 것입니다.",
+            QSystemTrayIcon.Information,
+            4000,
+        )
 
     def _on_conversation_selected(self, conversation_id: str, conversation_type: str) -> None:
         self._current_conversation_id = conversation_id
@@ -507,7 +529,7 @@ class MainWindow(QMainWindow):
 
         (로컬 UI 전용 상태 — 기존 _on_message_received와는 별도의 슬롯으로 동작한다.)
         """
-        if not self._notify_popup or self.isVisible():
+        if not self._notify_popup or (self.isVisible() and not self.isMinimized()):
             return
         if message.sender_id == self.chat_engine.client_id:
             return
@@ -534,7 +556,7 @@ class MainWindow(QMainWindow):
 
     def _on_file_completed_for_tray(self, file_id: str, success: bool) -> None:
         """창이 트레이에 내려가 있을 때 파일 수신 완료를 트레이 풍선 알림으로 표시한다."""
-        if not self._notify_popup or self.isVisible() or not success:
+        if not self._notify_popup or (self.isVisible() and not self.isMinimized()) or not success:
             return
         record = self.storage.get_file_record(file_id)
         if record is None or record.direction != "in":
