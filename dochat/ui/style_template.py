@@ -50,7 +50,7 @@ QPushButton#IconRailButton {{
     color: #94A3C4;
     border: none;
     border-radius: 10px;
-    font-size: 10px;
+    font-size: {font_size}px;
     font-weight: 600;
 }}
 
@@ -77,7 +77,7 @@ QPushButton#IconRailButton:checked {{
 
 #AppTitle {{
     color: {text_primary};
-    font-size: 16px;
+    font-size: {font_size}px;
     font-weight: 700;
 }}
 
@@ -107,7 +107,7 @@ QPushButton#SidebarActionButton:pressed {{
 
 #VersionLabel {{
     color: {text_secondary};
-    font-size: 11px;
+    font-size: {font_size}px;
     background: transparent;
 }}
 
@@ -117,7 +117,7 @@ QPushButton#QuitButton {{
     border-radius: 6px;
     padding: 4px 12px;
     color: #C0392B;
-    font-size: 12px;
+    font-size: {font_size}px;
 }}
 
 QPushButton#QuitButton:hover {{
@@ -131,7 +131,7 @@ QLineEdit#SearchInput {{
     border: 1px solid {border};
     border-radius: 8px;
     padding: 7px 10px;
-    font-size: 12px;
+    font-size: {font_size}px;
     color: {text_primary};
 }}
 
@@ -141,7 +141,7 @@ QLineEdit#SearchInput:focus {{
 
 #ListSectionLabel {{
     color: {text_secondary};
-    font-size: 11px;
+    font-size: {font_size}px;
     font-weight: 700;
     background: transparent;
 }}
@@ -177,13 +177,13 @@ QListWidget#ConversationList::item:hover:!selected {{
 }}
 
 #ChatHeaderTitle {{
-    font-size: 15px;
+    font-size: {font_size}px;
     font-weight: 600;
     color: {text_primary};
 }}
 
 #ChatHeaderSubtitle {{
-    font-size: 12px;
+    font-size: {font_size}px;
     color: {text_secondary};
 }}
 
@@ -191,7 +191,7 @@ QPushButton#HeaderIconButton {{
     background-color: transparent;
     border: none;
     border-radius: 8px;
-    font-size: 15px;
+    font-size: {font_size}px;
     color: {text_secondary};
     padding: 6px 10px;
 }}
@@ -217,7 +217,7 @@ QScrollArea#ChatScrollArea {{
 
 #EmptyStateLabel {{
     color: {text_secondary};
-    font-size: 13px;
+    font-size: {font_size}px;
 }}
 
 /* 말풍선 (실제로는 message_bubble.py가 인라인 스타일로 직접 칠하므로
@@ -244,19 +244,19 @@ QScrollArea#ChatScrollArea {{
 
 #BubbleMeta {{
     color: {text_secondary};
-    font-size: 11px;
+    font-size: {font_size}px;
     background: transparent;
 }}
 
 #BubbleMetaMine {{
     color: #DCE5FA;
-    font-size: 11px;
+    font-size: {font_size}px;
     background: transparent;
 }}
 
 #BubbleSender {{
     color: {accent};
-    font-size: 11px;
+    font-size: {font_size}px;
     font-weight: 600;
     background: transparent;
 }}
@@ -279,7 +279,7 @@ QScrollArea#ChatScrollArea {{
 
 #FileMetaLabel {{
     color: {text_secondary};
-    font-size: 11px;
+    font-size: {font_size}px;
     background: transparent;
 }}
 
@@ -294,15 +294,15 @@ QScrollArea#ChatScrollArea {{
 #ComposeBarCard {{
     background-color: {sidebar_bg};
     border: 1px solid {border};
-    border-radius: 24px;
+    border-radius: 20px;
 }}
 
 QLineEdit#ComposeInput {{
     background-color: transparent;
     border: none;
-    border-radius: 24px;
-    padding: 12px 6px;
-    font-size: 14px;
+    border-radius: 20px;
+    padding: 7px 6px;
+    font-size: {font_size}px;
     color: {text_primary};
 }}
 
@@ -324,8 +324,8 @@ QPushButton#SendButton {{
     background-color: {accent};
     color: #FFFFFF;
     border: none;
-    border-radius: 20px;
-    padding: 10px 22px;
+    border-radius: 18px;
+    padding: 7px 18px;
     font-weight: 700;
 }}
 
@@ -443,7 +443,7 @@ QLabel#DialogLabel {{
 
 QLabel#DialogHint {{
     color: {text_secondary};
-    font-size: 11px;
+    font-size: {font_size}px;
 }}
 
 QScrollBar:vertical {{

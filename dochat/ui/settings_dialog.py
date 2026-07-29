@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -75,16 +76,32 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("환경설정")
         self.setModal(True)
         self.setMinimumWidth(560)
+        # 항목이 많아 세로로 다 펼치면 화면 밖으로 넘어가던 문제를, 설정을
+        # 성격별로 탭 3개(프로필/테마·폰트/일반)로 나눠 해결한다 - 어떤 화면
+        # 크기에서도 한 화면 안에 다 들어오는 고정 크기로 잡는다.
+        self.resize(600, 520)
 
         self._selected_folder: str = str(config.RECEIVED_FILES_DIR)
 
         root = QVBoxLayout(self)
         root.setSpacing(14)
 
-        form = QFormLayout()
-        form.setSpacing(10)
-        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        root.addLayout(form)
+        tabs = QTabWidget()
+        root.addWidget(tabs, 1)
+
+        def _make_tab(title: str) -> QFormLayout:
+            page = QWidget()
+            page_form = QFormLayout(page)
+            page_form.setSpacing(10)
+            page_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            tabs.addTab(page, title)
+            return page_form
+
+        profile_form = _make_tab("프로필")
+        theme_form = _make_tab("테마 && 폰트")
+        general_form = _make_tab("일반")
+
+        form = profile_form
 
         # --- 내 닉네임 -----------------------------------------------
         # 표시 이름이라 아주 길 필요는 없지만, 기존 필드가 시각적으로 너무
@@ -158,6 +175,8 @@ class SettingsDialog(QDialog):
         address_hint.setWordWrap(True)
         form.addRow("", address_hint)
 
+        form = general_form
+
         # --- 파일 저장 폴더 ---------------------------------------------
         folder_row = QHBoxLayout()
         self._folder_edit = QLineEdit(self._selected_folder)
@@ -183,6 +202,8 @@ class SettingsDialog(QDialog):
         port_hint = QLabel("이 값을 바꾸면 앱을 재시작해야 적용됩니다.")
         port_hint.setObjectName("DialogHint")
         form.addRow("", port_hint)
+
+        form = theme_form
 
         # --- 채팅 테마 -----------------------------------------------------
         self._mine_color: str = storage.get_setting("bubble_mine_color", "") or ""
@@ -254,7 +275,7 @@ class SettingsDialog(QDialog):
         self._font_size_spin.setRange(10, 20)
         self._font_size_spin.setSuffix("px")
         saved_font_size = storage.get_setting("app_font_size")
-        self._font_size_spin.setValue(int(saved_font_size) if saved_font_size else 13)
+        self._font_size_spin.setValue(int(saved_font_size) if saved_font_size else 10)
         font_row.addWidget(self._font_combo, 1)
         font_row.addWidget(self._font_size_spin)
         form.addRow("폰트", font_row)
@@ -263,6 +284,8 @@ class SettingsDialog(QDialog):
         font_hint.setObjectName("DialogHint")
         font_hint.setWordWrap(True)
         form.addRow("", font_hint)
+
+        form = general_form
 
         # --- 보안 키(암호화) -----------------------------------------------
         self._network_key_edit = QLineEdit(storage.get_setting("network_key", "") or "")
@@ -307,7 +330,7 @@ class SettingsDialog(QDialog):
         self._diagnostic_button.clicked.connect(self._on_open_network_diagnostic)
         diagnostic_row.addWidget(diagnostic_hint, 1)
         diagnostic_row.addWidget(self._diagnostic_button)
-        root.addLayout(diagnostic_row)
+        general_form.addRow("", diagnostic_row)
 
         # --- 버전 정보 / 업데이트 -----------------------------------------
         version_row = QHBoxLayout()

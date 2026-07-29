@@ -84,6 +84,9 @@ class ChatEngine(QObject):
         self._incoming: dict[str, IncomingFileTransfer] = {}      # file_id -> transfer
         self._incoming_conv_type: dict[str, str] = {}             # file_id -> conversation_type
         self._incoming_sender_addr: dict[str, tuple[str, int]] = {}  # file_id -> 발신자 주소 (취소 통지용)
+        # 그룹 전송은 대상(멤버)마다 세션이 따로 있어 완료/실패가 여러 번 콜백될
+        # 수 있으므로, 같은 file_id에 대해 Message를 중복 생성하지 않도록 추적한다.
+        self._file_message_created: set[str] = set()
 
         self.socket = ReliableUDPSocket(
             client_id=self._client_id,
@@ -603,6 +606,29 @@ class ChatEngine(QObject):
     # ------------------------------------------------------------------
     # 파일 전송
     # ------------------------------------------------------------------
+    def _record_file_message_once(self, file_id: str, conversation_id: str, conversation_type: str) -> None:
+        """file_id에 대한 Message를 딱 한 번만 만들어 대화 내역에 남긴다.
+
+        그룹 전송은 멤버마다 별도 세션으로 완료/실패가 각각 콜백되므로, 첫
+        완료(성공이든 실패든)에서만 기록해 같은 파일이 여러 번 겹쳐 보이지
+        않게 한다. 실패해도 기록을 남겨야 사용자가 "무슨 일이 있었는지"
+        대화창에서 바로 확인할 수 있다(예전엔 실패 시 아무 흔적도 안 남아,
+        파일을 첨부해도 조용히 사라진 것처럼 보이는 문제가 있었다).
+        """
+        if file_id in self._file_message_created:
+            return
+        self._file_message_created.add(file_id)
+        message = Message(
+            id=str(uuid.uuid4()),
+            conversation_id=conversation_id,
+            conversation_type=conversation_type,
+            sender_id=self.client_id,
+            type=MessageType.FILE,
+            timestamp=time.time(),
+            file_id=file_id,
+        )
+        self.storage.add_message(message)
+
     def send_file(self, conversation_id: str, conversation_type: str, file_path: str) -> str:
         file_id = str(uuid.uuid4())
 
@@ -623,6 +649,7 @@ class ChatEngine(QObject):
                 conversation_type=conversation_type,
             )
             self.storage.add_file_record(record)
+            self._record_file_message_once(file_id, conversation_id, conversation_type)
             QTimer.singleShot(0, lambda: self.file_completed.emit(file_id, False))
             return file_id
 
@@ -640,9 +667,16 @@ class ChatEngine(QObject):
         )
         self.storage.add_file_record(record)
 
+        # 상대가 오프라인이라 ACK가 한참 안 오더라도, 파일을 첨부한 즉시
+        # "전송 중" 버블이 바로 보이도록 진행률 0%를 먼저 알린다(그렇지 않으면
+        # 실제 청크가 하나라도 오갈 때까지 화면에 아무 반응이 없어, 첨부가
+        # 조용히 실패한 것처럼 보였다).
+        QTimer.singleShot(0, lambda: self.file_progress.emit(file_id, 0, max(probe.total_chunks, 1), "out"))
+
         targets = self._resolve_targets(conversation_id, conversation_type)
         if not targets:
             self.storage.update_file_status(file_id, FileStatus.FAILED)
+            self._record_file_message_once(file_id, conversation_id, conversation_type)
             QTimer.singleShot(0, lambda: self.file_completed.emit(file_id, False))
             return file_id
 
@@ -731,18 +765,9 @@ class ChatEngine(QObject):
 
         self._outgoing.pop(key, None)
         self.storage.update_file_status(file_id, FileStatus.COMPLETED if success else FileStatus.FAILED)
-
-        if success:
-            message = Message(
-                id=str(uuid.uuid4()),
-                conversation_id=session["conversation_id"],
-                conversation_type=session["conversation_type"],
-                sender_id=self.client_id,
-                type=MessageType.FILE,
-                timestamp=time.time(),
-                file_id=file_id,
-            )
-            self.storage.add_message(message)
+        # 성공/실패 모두 대화 내역에 남긴다 - 실패했을 때도 사용자가 무엇이
+        # 실패했는지 볼 수 있어야 한다(_record_file_message_once 참고).
+        self._record_file_message_once(file_id, session["conversation_id"], session["conversation_type"])
 
         self.file_completed.emit(file_id, success)
 

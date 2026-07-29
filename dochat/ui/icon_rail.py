@@ -21,7 +21,10 @@ class _RailButton(QPushButton):
         self.setObjectName("IconRailButton")
         self.setCheckable(True)
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedSize(RAIL_WIDTH - 12, RAIL_WIDTH - 16)
+        # 아이콘+라벨 두 줄 텍스트가 폰트 크기 설정에 따라 잘리지 않도록,
+        # 폭만 고정하고 높이는 최소값만 두어 내용에 맞게 늘어나게 한다.
+        self.setFixedWidth(RAIL_WIDTH - 12)
+        self.setMinimumHeight(RAIL_WIDTH - 16)
 
 
 class IconRail(QWidget):
@@ -56,7 +59,7 @@ class IconRail(QWidget):
         self._group.addButton(self._discover_button)
         layout.addWidget(self._discover_button)
 
-        self._file_room_button = _RailButton("\U0001F4C1", "파일함")  # 📁
+        self._file_room_button = _RailButton("\U0001F4C1", "파일")  # 📁
         self._file_room_button.clicked.connect(self._on_transient_action(self.file_room_clicked))
         self._group.addButton(self._file_room_button)
         layout.addWidget(self._file_room_button)

@@ -110,7 +110,7 @@ def get_app_theme(storage) -> BubbleTheme:
 DEFAULT_FONT_FAMILY = (
     '"Pretendard", "Malgun Gothic", "Segoe UI", "Apple SD Gothic Neo", "Helvetica Neue", Arial, sans-serif'
 )
-DEFAULT_FONT_SIZE = "13"
+DEFAULT_FONT_SIZE = "10"
 
 
 def render_stylesheet(storage) -> str:

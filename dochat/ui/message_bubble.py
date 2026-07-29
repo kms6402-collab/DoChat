@@ -24,7 +24,7 @@ from dochat.config import FILE_CHUNK_SIZE
 from dochat.models.message import FileRecord, FileStatus, MessageType
 from dochat.models.message import Message
 from dochat.ui.avatar_widget import AvatarWidget, ME_AVATAR_COLOR, avatar_color_for
-from dochat.ui.themes import get_app_theme
+from dochat.ui.themes import DEFAULT_FONT_SIZE, get_app_theme
 
 try:
     # 같은 앱 내부 재사용: 폴더에서 보기(OS별 파일 탐색기 열기) 로직을 file_room과 공유한다.
@@ -159,6 +159,10 @@ class MessageBubble(QWidget):
         app_theme = get_app_theme(storage)
         self._text_color = app_theme.text_primary
         self._text_secondary = app_theme.text_secondary
+        # 앱 전체 폰트 크기 설정을 그대로 따라 메시지 영역의 모든 텍스트가
+        # 동일한 크기를 쓰도록 한다(파일/이모지 아이콘 글리프 크기는 예외).
+        saved_font_size = storage.get_setting("app_font_size") if storage else None
+        self._font_size = int(saved_font_size) if saved_font_size else int(DEFAULT_FONT_SIZE)
 
         if message.type == MessageType.SYSTEM:
             self._build_system_content()
@@ -193,7 +197,7 @@ class MessageBubble(QWidget):
 
             time_label = QLabel(self._format_time(message.timestamp))
             time_label.setStyleSheet(
-                f"color: {self._text_secondary}; font-size: 11px; background: transparent;"
+                f"color: {self._text_secondary}; font-size: {self._font_size}px; background: transparent;"
             )
             header_row.addWidget(time_label)
 
@@ -236,7 +240,7 @@ class MessageBubble(QWidget):
             self._read_label = QLabel("읽음")
             self._read_label.setObjectName("BubbleReadStatus")
             self._read_label.setStyleSheet(
-                f"color: {self._text_secondary}; font-size: 10px; background: transparent;"
+                f"color: {self._text_secondary}; font-size: {self._font_size}px; background: transparent;"
             )
             self._read_label.setVisible(bool(message.read_at))
             meta_row.addWidget(self._read_label)
@@ -245,7 +249,7 @@ class MessageBubble(QWidget):
             meta_label = QLabel(self._format_time(message.timestamp))
             meta_label.setObjectName("BubbleMetaMine" if is_mine else "BubbleMeta")
             meta_label.setStyleSheet(
-                f"color: {self._text_secondary}; font-size: 10px; background: transparent;"
+                f"color: {self._text_secondary}; font-size: {self._font_size}px; background: transparent;"
             )
             meta_row.addWidget(meta_label)
 
@@ -288,7 +292,7 @@ class MessageBubble(QWidget):
         if self._message.edited_at and not self._message.deleted:
             edited_label = QLabel("(수정됨)")
             edited_label.setStyleSheet(
-                f"color: {text_color}; background: transparent; font-size: 10px;"
+                f"color: {text_color}; background: transparent; font-size: {self._font_size}px;"
             )
             layout.addWidget(edited_label)
             self._edited_label = edited_label
@@ -307,7 +311,7 @@ class MessageBubble(QWidget):
         label.setStyleSheet(
             "background-color: rgba(128, 128, 128, 0.18);"
             " color: #8A8F98;"
-            " font-size: 11px;"
+            f" font-size: {self._font_size}px;"
             " padding: 4px 12px;"
             " border-radius: 10px;"
         )
@@ -354,7 +358,7 @@ class MessageBubble(QWidget):
         meta_label = QLabel(_human_size(size))
         meta_label.setObjectName("FileMetaLabel")
         meta_label.setStyleSheet(
-            f"color: {self._text_secondary}; font-size: 11px; background: transparent;"
+            f"color: {self._text_secondary}; font-size: {self._font_size}px; background: transparent;"
         )
         layout.addWidget(meta_label)
 
@@ -369,7 +373,7 @@ class MessageBubble(QWidget):
             self._progress_bar = bar
 
             speed_label = QLabel("")
-            speed_label.setStyleSheet("font-size: 10px; color: #9AA1AC; background: transparent;")
+            speed_label.setStyleSheet(f"font-size: {self._font_size}px; color: #9AA1AC; background: transparent;")
             layout.addWidget(speed_label)
             self._speed_label = speed_label
 
@@ -378,7 +382,6 @@ class MessageBubble(QWidget):
             cancel_row.addStretch(1)
             cancel_button = QPushButton("취소")
             cancel_button.setCursor(Qt.PointingHandCursor)
-            cancel_button.setFixedHeight(20)
             cancel_button.clicked.connect(self._on_cancel_clicked)
             cancel_row.addWidget(cancel_button)
             layout.addLayout(cancel_row)
@@ -389,18 +392,27 @@ class MessageBubble(QWidget):
             cancelled_row.setContentsMargins(0, 0, 0, 0)
             cancelled_row.setSpacing(6)
             cancelled_label = QLabel("취소됨")
-            cancelled_label.setStyleSheet("color: #9AA1AC; font-size: 11px; background: transparent;")
+            cancelled_label.setStyleSheet(f"color: #9AA1AC; font-size: {self._font_size}px; background: transparent;")
             cancelled_row.addWidget(cancelled_label)
             if self._resumable and record is not None and record.direction == "in":
                 resume_button = QPushButton("이어받기")
                 resume_button.setCursor(Qt.PointingHandCursor)
-                resume_button.setFixedHeight(20)
                 resume_button.clicked.connect(self._on_resume_clicked)
                 cancelled_row.addWidget(resume_button)
                 self._resume_button = resume_button
             cancelled_row.addStretch(1)
             layout.addLayout(cancelled_row)
             self._cancelled_label = cancelled_label
+        elif status == FileStatus.FAILED:
+            self._progress_bar = None
+            failed_row = QHBoxLayout()
+            failed_row.setContentsMargins(0, 0, 0, 0)
+            failed_row.setSpacing(6)
+            failed_label = QLabel("⚠ 전송 실패")  # ⚠ 전송 실패
+            failed_label.setStyleSheet(f"color: #E0433B; font-size: {self._font_size}px; font-weight: 600; background: transparent;")
+            failed_row.addWidget(failed_label)
+            failed_row.addStretch(1)
+            layout.addLayout(failed_row)
         else:
             self._progress_bar = None
 
@@ -410,11 +422,9 @@ class MessageBubble(QWidget):
             action_row.setSpacing(6)
             open_button = QPushButton("열기")
             open_button.setCursor(Qt.PointingHandCursor)
-            open_button.setFixedHeight(22)
             open_button.clicked.connect(self._open_file)
             reveal_button = QPushButton("폴더에서 보기")
             reveal_button.setCursor(Qt.PointingHandCursor)
-            reveal_button.setFixedHeight(22)
             reveal_button.clicked.connect(self._reveal_in_folder)
             action_row.addWidget(open_button)
             action_row.addWidget(reveal_button)
@@ -521,7 +531,7 @@ class MessageBubble(QWidget):
             text_color = self._text_color
             edited_label = QLabel("(수정됨)")
             edited_label.setStyleSheet(
-                f"color: {text_color}; background: transparent; font-size: 10px;"
+                f"color: {text_color}; background: transparent; font-size: {self._font_size}px;"
             )
             # meta_row(시간/읽음 표시) 바로 앞에 삽입한다.
             self._bubble_layout.insertWidget(self._bubble_layout.count() - 1, edited_label)
@@ -564,11 +574,9 @@ class MessageBubble(QWidget):
                 action_row.setSpacing(6)
                 open_button = QPushButton("열기")
                 open_button.setCursor(Qt.PointingHandCursor)
-                open_button.setFixedHeight(22)
                 open_button.clicked.connect(self._open_file)
                 reveal_button = QPushButton("폴더에서 보기")
                 reveal_button.setCursor(Qt.PointingHandCursor)
-                reveal_button.setFixedHeight(22)
                 reveal_button.clicked.connect(self._reveal_in_folder)
                 action_row.addWidget(open_button)
                 action_row.addWidget(reveal_button)
@@ -596,7 +604,7 @@ class MessageBubble(QWidget):
             cancelled_row.setContentsMargins(0, 0, 0, 0)
             cancelled_row.setSpacing(6)
             cancelled_label = QLabel("취소됨")
-            cancelled_label.setStyleSheet("color: #9AA1AC; font-size: 11px; background: transparent;")
+            cancelled_label.setStyleSheet(f"color: #9AA1AC; font-size: {self._font_size}px; background: transparent;")
             cancelled_row.addWidget(cancelled_label)
             if (
                 self._resumable
@@ -606,7 +614,6 @@ class MessageBubble(QWidget):
             ):
                 resume_button = QPushButton("이어받기")
                 resume_button.setCursor(Qt.PointingHandCursor)
-                resume_button.setFixedHeight(20)
                 resume_button.clicked.connect(self._on_resume_clicked)
                 cancelled_row.addWidget(resume_button)
                 self._resume_button = resume_button

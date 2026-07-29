@@ -188,10 +188,6 @@ class MainWindow(QMainWindow):
         header_layout.setContentsMargins(16, 16, 16, 12)
         header_layout.setSpacing(10)
 
-        title_label = QLabel(config.APP_NAME)
-        title_label.setObjectName("AppTitle")
-        header_layout.addWidget(title_label)
-
         button_row = QHBoxLayout()
         button_row.setSpacing(8)
         self._new_contact_button = QPushButton("+ 새 대화")

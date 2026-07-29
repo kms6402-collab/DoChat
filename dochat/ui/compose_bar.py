@@ -81,7 +81,7 @@ class ComposeBar(QWidget):
         self._attach_button = QPushButton("\U0001F4CE")  # 📎
         self._attach_button.setObjectName("AttachButton")
         self._attach_button.setToolTip("파일 첨부")
-        self._attach_button.setFixedSize(34, 34)
+        self._attach_button.setFixedSize(30, 30)
         self._attach_button.clicked.connect(self._on_attach_clicked)
 
         self._input = QLineEdit()

@@ -19,6 +19,7 @@ from dochat.models.contact import Contact, Group
 from dochat.models.message import ConversationType, MessageType
 from dochat.models.storage import Storage
 from dochat.ui.avatar_widget import AvatarWidget, GROUP_AVATAR_COLOR, avatar_color_for
+from dochat.ui.themes import DEFAULT_FONT_SIZE
 
 ONLINE_COLOR = "#22C55E"
 OFFLINE_COLOR = "#9CA3AF"
@@ -100,9 +101,11 @@ class _ConversationRow(QWidget):
         online: bool | None,
         avatar_color: str,
         photo_path: str | None = None,
+        font_size: int = 10,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
+        self._font_size = font_size
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(10)
@@ -117,7 +120,7 @@ class _ConversationRow(QWidget):
         title_row = QHBoxLayout()
         title_row.setSpacing(6)
         title_label = QLabel(title)
-        title_label.setStyleSheet("font-weight: 700; font-size: 14px; background: transparent;")
+        title_label.setStyleSheet(f"font-weight: 700; font-size: {font_size}px; background: transparent;")
         title_row.addWidget(title_label)
 
         # 상태 점은 아바타 위에 겹쳐 표시하지만, 온라인/오프라인 여부를
@@ -125,7 +128,7 @@ class _ConversationRow(QWidget):
         self.presence_label: QLabel | None = None
         if not is_group:
             self.presence_label = QLabel()
-            self.presence_label.setStyleSheet("font-size: 10px; font-weight: 600; background: transparent;")
+            self.presence_label.setStyleSheet(f"font-size: {font_size}px; font-weight: 600; background: transparent;")
             self._update_presence_label(bool(online))
             title_row.addWidget(self.presence_label)
 
@@ -135,7 +138,7 @@ class _ConversationRow(QWidget):
 
         self.preview_label = QLabel(preview)
         self.preview_label.setStyleSheet(
-            "color: #ABA6C6; font-size: 11px; background: transparent;"
+            f"color: #ABA6C6; font-size: {font_size}px; background: transparent;"
         )
         self.preview_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         fm = self.preview_label.fontMetrics()
@@ -170,12 +173,12 @@ class _ConversationRow(QWidget):
         if online:
             self.presence_label.setText("온라인")
             self.presence_label.setStyleSheet(
-                f"color: {ONLINE_COLOR}; font-size: 10px; font-weight: 700; background: transparent;"
+                f"color: {ONLINE_COLOR}; font-size: {self._font_size}px; font-weight: 700; background: transparent;"
             )
         else:
             self.presence_label.setText("오프라인")
             self.presence_label.setStyleSheet(
-                f"color: {OFFLINE_COLOR}; font-size: 10px; font-weight: 600; background: transparent;"
+                f"color: {OFFLINE_COLOR}; font-size: {self._font_size}px; font-weight: 600; background: transparent;"
             )
 
     def set_online(self, online: bool) -> None:
@@ -255,6 +258,9 @@ class ConversationList(QWidget):
         self._favorites = set(favorites) if favorites else set()
         selected_key = self.current_selection()
 
+        saved_font_size = storage.get_setting("app_font_size")
+        self._font_size = int(saved_font_size) if saved_font_size else int(DEFAULT_FONT_SIZE)
+
         self._list.clear()
         self._items.clear()
         self._titles.clear()
@@ -314,6 +320,7 @@ class ConversationList(QWidget):
             online=contact.online,
             avatar_color=avatar_color_for(contact.id),
             photo_path=photo_path,
+            font_size=self._font_size,
         )
         return self._add_row(key, row, contact.nickname)
 
@@ -326,6 +333,7 @@ class ConversationList(QWidget):
             is_group=True,
             online=None,
             avatar_color=GROUP_AVATAR_COLOR,
+            font_size=self._font_size,
         )
         return self._add_row(key, row, group.name)
 
