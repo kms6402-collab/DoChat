@@ -6,6 +6,7 @@ API를 제공한다.
 """
 from __future__ import annotations
 
+import base64
 import os
 import socket as _socket
 import time
@@ -15,11 +16,13 @@ from typing import Callable
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from dochat.config import (
+    AVATAR_DIR,
     CLIENT_ID,
     DEFAULT_LISTEN_PORT,
     DEFAULT_NETWORK_KEY,
     FILE_CHUNK_SIZE,
     FILE_WINDOW_SIZE,
+    MY_AVATAR_PATH,
     PRESENCE_INTERVAL_SEC,
 )
 from dochat.models.contact import Contact, Group
@@ -51,6 +54,7 @@ class ChatEngine(QObject):
     typing_indicator = Signal(str, str, str)    # conversation_id, conversation_type, contact_id
     message_deleted = Signal(str, str)          # message_id, conversation_id
     message_edited = Signal(str, str, str)      # message_id, conversation_id, new_text
+    avatar_updated = Signal(str)                # contact_id (해당 연락처의 프로필 사진이 갱신됨)
 
     def __init__(self, storage: Storage, listen_port: int = DEFAULT_LISTEN_PORT, parent=None):
         super().__init__(parent)
@@ -131,10 +135,10 @@ class ChatEngine(QObject):
 
     @staticmethod
     def _default_nickname() -> str:
-        try:
-            return os.getlogin()
-        except OSError:
-            return "사용자"
+        # OS 로그인 계정명(os.getlogin())은 실제 이름/사내 계정 등 개인정보를
+        # 노출할 수 있어 기본값으로 쓰지 않는다. 사용자가 설정에서 직접
+        # 닉네임을 입력하기 전까지는 이 중립적인 기본값을 사용한다.
+        return "새 사용자"
 
     def add_contact(self, nickname: str, ip: str, port: int) -> Contact:
         contact = self.peer_manager.add_contact(nickname, ip, port)
@@ -149,6 +153,7 @@ class ChatEngine(QObject):
             payload={"nickname": self.my_nickname},
         )
         self.socket.send_reliable(packet, contact.address)
+        self._send_my_avatar_to(contact)
 
         return contact
 
@@ -770,6 +775,8 @@ class ChatEngine(QObject):
             if now_online:
                 # 오프라인 -> 온라인 전환: 대기 중인 재전송 메시지가 있으면 다시 시도한다.
                 self._retry_pending_for_contact(contact_id)
+                # 그 사이 프로필 사진이 바뀌었을 수 있으니 재접속 시 다시 보내준다.
+                self._send_my_avatar_to(contact)
 
     # ------------------------------------------------------------------
     # 수신 패킷 처리
@@ -789,6 +796,7 @@ class ChatEngine(QObject):
             MsgType.TYPING: self._handle_typing,
             MsgType.MESSAGE_DELETE: self._handle_message_delete,
             MsgType.MESSAGE_EDIT: self._handle_message_edit,
+            MsgType.AVATAR_SYNC: self._handle_avatar_sync,
         }.get(packet.msg_type)
         if handler:
             handler(packet, addr)
@@ -807,6 +815,59 @@ class ChatEngine(QObject):
         self.peer_manager.mark_online(contact_id)
         self._update_online_state(contact_id)
         self.contact_added.emit(contact_id)
+
+        # 상대가 먼저 나를 등록한 경우이므로, 답례로 내 프로필 사진도 보내준다.
+        contact = self.peer_manager.get_contact(contact_id)
+        if contact is not None:
+            self._send_my_avatar_to(contact)
+
+    # ------------------------------------------------------------------
+    # 프로필 사진 동기화 (단일 패킷 전송 - 청크 분할 불필요할 만큼 작게 강제됨)
+    # ------------------------------------------------------------------
+    def _send_my_avatar_to(self, contact: Contact) -> None:
+        """내 프로필 사진(설정돼 있으면)을 지정한 연락처에게 보낸다.
+
+        아바타 이미지는 설정 화면에서 저장할 때 이미 AVATAR_MAX_BYTES 이하로
+        압축되므로, 파일 전송(file_transfer.py)처럼 청크로 나눌 필요 없이
+        단일 패킷으로 안전하게 보낼 수 있다.
+        """
+        if not MY_AVATAR_PATH.exists():
+            return
+        try:
+            data = MY_AVATAR_PATH.read_bytes()
+        except OSError:
+            return
+
+        packet = Packet(
+            msg_type=MsgType.AVATAR_SYNC,
+            seq=0,
+            sender_id=self.client_id,
+            payload={"mime_type": "image/jpeg", "data_b64": base64.b64encode(data).decode("ascii")},
+        )
+        self.socket.send_reliable(packet, contact.address)
+
+    def broadcast_my_avatar(self) -> None:
+        """내 프로필 사진이 바뀌었을 때 이미 알고 있는 모든 연락처에게 다시 보낸다."""
+        for contact in self.peer_manager.all_contacts():
+            self._send_my_avatar_to(contact)
+
+    def _handle_avatar_sync(self, packet: Packet, addr: tuple[str, int]) -> None:
+        """상대가 보낸 프로필 사진을 받아 로컬 캐시(AVATAR_DIR)에 저장한다."""
+        data_b64 = (packet.payload or {}).get("data_b64")
+        if not data_b64:
+            return
+        try:
+            data = base64.b64decode(data_b64)
+        except (ValueError, TypeError):
+            return
+
+        contact_id = self._resolve_contact(packet.sender_id, addr[0], addr[1])
+        avatar_path = AVATAR_DIR / f"{contact_id}.jpg"
+        try:
+            avatar_path.write_bytes(data)
+        except OSError:
+            return
+        self.avatar_updated.emit(contact_id)
 
     def _handle_text(self, packet: Packet, addr: tuple[str, int]) -> None:
         payload = packet.payload

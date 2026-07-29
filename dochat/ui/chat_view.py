@@ -12,8 +12,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dochat import config
 from dochat.models.message import ConversationType, Message, MessageType
 from dochat.ui.message_bubble import MessageBubble
+
+# 팀즈 스타일 그룹핑: 같은 발신자의 메시지가 이 시간(초) 안에 연달아 오면
+# 아바타/이름/시각 헤더를 생략하고 이어붙여 보여준다.
+GROUP_HEADER_GAP_SEC = 300
 
 
 class ChatView(QWidget):
@@ -34,6 +39,10 @@ class ChatView(QWidget):
         self._bubbles_by_message_id: dict[str, MessageBubble] = {}
         self._bubbles: list[MessageBubble] = []
         self._contact_name_cache: dict[str, str] = {}
+
+        # 팀즈 스타일 연속 메시지 그룹핑 상태 (대화 전환/clear 시 리셋됨)
+        self._last_sender_id: str | None = None
+        self._last_ts: float | None = None
 
         self.setAcceptDrops(True)
 
@@ -71,6 +80,8 @@ class ChatView(QWidget):
             bubble.setParent(None)
             bubble.deleteLater()
         self._bubbles.clear()
+        self._last_sender_id = None
+        self._last_ts = None
 
     def _resolve_sender_name(self, sender_id: str) -> str:
         if not sender_id:
@@ -84,10 +95,39 @@ class ChatView(QWidget):
         self._contact_name_cache[sender_id] = name
         return name
 
+    def _resolve_sender_avatar_path(self, sender_id: str) -> str | None:
+        """발신자의 프로필 사진 캐시 경로를 돌려준다(없으면 None -> AvatarWidget이
+        이니셜로 폴백한다). 아바타는 로컬 Contact.id로 캐시되는데, 이는 메시지의
+        sender_id(상대의 전역 CLIENT_ID)와 다른 경우가 많으므로(_resolve_sender_name
+        과 동일한 이유) 반드시 get_contact_for_sender()로 로컬 id를 거쳐야 한다."""
+        if not sender_id:
+            return None
+        if sender_id == self.my_id:
+            return str(config.MY_AVATAR_PATH) if config.MY_AVATAR_PATH.exists() else None
+        contact = self._chat_engine.get_contact_for_sender(sender_id)
+        if contact is None:
+            return None
+        return str(config.AVATAR_DIR / f"{contact.id}.jpg")
+
     def _make_bubble(self, message: Message) -> MessageBubble:
         is_mine = message.sender_id == self.my_id
-        show_sender = self.conversation_type == ConversationType.GROUP
-        sender_name = self._resolve_sender_name(message.sender_id) if show_sender else ""
+        sender_name = self._resolve_sender_name(message.sender_id)
+        sender_avatar_path = self._resolve_sender_avatar_path(message.sender_id)
+
+        if message.type == MessageType.SYSTEM:
+            show_header = False
+            # 시스템 메시지(입장/퇴장) 다음에 오는 실제 메시지는 항상 헤더를
+            # 새로 보여주는 게 자연스러우므로 그룹핑 상태를 리셋한다.
+            self._last_sender_id = None
+            self._last_ts = None
+        else:
+            show_header = (
+                message.sender_id != self._last_sender_id
+                or self._last_ts is None
+                or message.timestamp - self._last_ts > GROUP_HEADER_GAP_SEC
+            )
+            self._last_sender_id = message.sender_id
+            self._last_ts = message.timestamp
 
         file_record = None
         resumable = False
@@ -99,7 +139,8 @@ class ChatView(QWidget):
             message=message,
             is_mine=is_mine,
             sender_name=sender_name,
-            show_sender=show_sender,
+            sender_avatar_path=sender_avatar_path,
+            show_header=show_header,
             file_record=file_record,
             storage=self._storage,
             on_cancel_requested=self._on_cancel_requested,

@@ -11,6 +11,7 @@ from PySide6.QtGui import QImage, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLineEdit,
     QMenu,
@@ -62,9 +63,20 @@ class ComposeBar(QWidget):
         super().__init__(parent)
         self.setObjectName("ComposeBar")
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(8)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(16, 10, 16, 16)
+        outer.setSpacing(0)
+
+        # 입력창을 감싸는 카드: 배경/보더/모서리는 이 프레임이 담당하고,
+        # main_window.py가 여기에 QGraphicsDropShadowEffect를 얹어 살짝
+        # 떠 있는 느낌을 낸다(QSS로는 box-shadow를 표현할 수 없음).
+        card = QFrame()
+        card.setObjectName("ComposeBarCard")
+        self.card = card
+
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(10, 4, 10, 4)
+        layout.setSpacing(6)
 
         self._attach_button = QPushButton("\U0001F4CE")  # 📎
         self._attach_button.setObjectName("AttachButton")
@@ -85,6 +97,8 @@ class ComposeBar(QWidget):
         layout.addWidget(self._attach_button)
         layout.addWidget(self._input, 1)
         layout.addWidget(self._send_button)
+
+        outer.addWidget(card)
 
         self.setEnabled(False)  # 대화를 선택하기 전엔 비활성화
 

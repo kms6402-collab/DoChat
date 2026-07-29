@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (
 from dochat.config import FILE_CHUNK_SIZE
 from dochat.models.message import FileRecord, FileStatus, MessageType
 from dochat.models.message import Message
-from dochat.ui.themes import get_app_theme, get_theme_colors
+from dochat.ui.avatar_widget import AvatarWidget, ME_AVATAR_COLOR, avatar_color_for
+from dochat.ui.themes import get_app_theme
 
 try:
     # 같은 앱 내부 재사용: 폴더에서 보기(OS별 파일 탐색기 열기) 로직을 file_room과 공유한다.
@@ -33,6 +34,12 @@ except ImportError:  # pragma: no cover - 순환참조 등 예외 상황에 대�
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 MAX_THUMB = 200
+
+# 팀즈 스타일 헤더(아바타+이름+시각) 관련 상수.
+HEADER_AVATAR_SIZE = 36
+HEADER_ROW_SPACING = 8
+# show_header=False일 때 내용물을 아바타 컬럼 아래로 정렬시키는 들여쓰기 폭.
+CONTENT_INDENT = HEADER_AVATAR_SIZE + HEADER_ROW_SPACING
 
 
 def _human_size(size: int) -> str:
@@ -110,7 +117,8 @@ class MessageBubble(QWidget):
         message: Message,
         is_mine: bool,
         sender_name: str = "",
-        show_sender: bool = False,
+        sender_avatar_path: str | None = None,
+        show_header: bool = False,
         file_record: FileRecord | None = None,
         on_cancel_requested: Callable[[str, str], None] | None = None,
         on_resume_requested: Callable[[str], None] | None = None,
@@ -142,41 +150,71 @@ class MessageBubble(QWidget):
         self._speed_label: QLabel | None = None
         self._progress_history: list[tuple[float, int]] = []
 
-        # 채팅 테마/커스텀 색 반영: 정적 QSS의 objectName 규칙 대신 실행 중
-        # 계산된 색상을 인라인 스타일시트로 적용해 즉시 반영되도록 한다.
-        self._mine_bg, self._mine_text, self._other_bg, self._other_text = get_theme_colors(storage)
-        # 상대방 말풍선(흰 배경)에 옅은 테두리를 둘러 배경과의 경계를 표시하기
-        # 위해 테마의 보더 색만 별도로 가져온다(카카오톡 스타일: 흰 배경 + 옅은 테두리).
-        self._border_color = get_app_theme(storage).border
+        # 채팅 테마 반영: 정적 QSS의 objectName 규칙 대신 실행 중 계산된 색상을
+        # 인라인 스타일시트로 적용해 즉시 반영되도록 한다.
+        # 참고: 레퍼런스(팀즈 스타일) 디자인에서는 내 메시지/상대 메시지 모두 카드
+        # 배경 없이 완전히 동일한 평면(flat) 처리를 하므로, 더 이상 "내 말풍선
+        # 틴트 색"을 계산할 필요가 없다(과거엔 bubble_mine_color 커스텀 설정이나
+        # theme.selection_bg를 카드 배경으로 썼었다).
+        app_theme = get_app_theme(storage)
+        self._text_color = app_theme.text_primary
+        self._text_secondary = app_theme.text_secondary
 
         if message.type == MessageType.SYSTEM:
             self._build_system_content()
             return
 
-        outer = QHBoxLayout(self)
-        outer.setContentsMargins(12, 3, 12, 3)
-        outer.setSpacing(0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 2, 12, 2)
+        outer.setSpacing(2)
 
-        column = QVBoxLayout()
-        column.setSpacing(2)
+        if show_header:
+            header_row = QHBoxLayout()
+            header_row.setContentsMargins(0, 0, 0, 0)
+            header_row.setSpacing(HEADER_ROW_SPACING)
 
-        if show_sender and not is_mine and sender_name:
-            sender_label = QLabel(sender_name)
-            sender_label.setObjectName("BubbleSender")
-            column.addWidget(sender_label)
+            avatar_color = (
+                ME_AVATAR_COLOR if is_mine else avatar_color_for(self._message.sender_id)
+            )
+            avatar = AvatarWidget(
+                size=HEADER_AVATAR_SIZE,
+                initial=sender_name or "?",
+                bg_color=avatar_color,
+                photo_path=sender_avatar_path,
+            )
+            header_row.addWidget(avatar)
+
+            name_label = QLabel(sender_name)
+            name_label.setObjectName("BubbleSender")
+            name_label.setStyleSheet(
+                f"color: {self._text_color}; font-weight: 600; background: transparent;"
+            )
+            header_row.addWidget(name_label)
+
+            time_label = QLabel(self._format_time(message.timestamp))
+            time_label.setStyleSheet(
+                f"color: {self._text_secondary}; font-size: 11px; background: transparent;"
+            )
+            header_row.addWidget(time_label)
+
+            header_row.addStretch(1)
+            outer.addLayout(header_row)
+
+        content_row = QHBoxLayout()
+        content_row.setContentsMargins(0, 0, 0, 0)
+        content_row.setSpacing(0)
+        if not show_header:
+            spacer = QWidget()
+            spacer.setFixedWidth(CONTENT_INDENT)
+            content_row.addWidget(spacer)
 
         bubble_frame = _ClickableFrame(on_double_click=self._open_file)
+        # 레퍼런스 디자인: 내 메시지/상대 메시지 모두 카드 배경/테두리 없이 완전히
+        # 동일한 평면 처리를 한다(아바타 색과 발신자 이름만으로 구분).
         bubble_frame.setObjectName("BubbleFrameMine" if is_mine else "BubbleFrameOther")
-        bubble_bg = self._mine_bg if is_mine else self._other_bg
-        if is_mine:
-            bubble_frame.setStyleSheet(f"background-color: {bubble_bg}; border-radius: 16px;")
-        else:
-            bubble_frame.setStyleSheet(
-                f"background-color: {bubble_bg}; border-radius: 16px; "
-                f"border: 1px solid {self._border_color};"
-            )
+        bubble_frame.setStyleSheet("background: transparent;")
         bubble_layout = QVBoxLayout(bubble_frame)
-        bubble_layout.setContentsMargins(12, 8, 12, 8)
+        bubble_layout.setContentsMargins(0, 0, 0, 0)
         bubble_layout.setSpacing(6)
         self._bubble_layout = bubble_layout
         self._bubble_frame = bubble_frame
@@ -193,39 +231,38 @@ class MessageBubble(QWidget):
         meta_row = QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
         meta_row.setSpacing(4)
-        if is_mine:
-            meta_row.addStretch(1)
 
         if is_mine and message.type == MessageType.TEXT:
             self._read_label = QLabel("읽음")
             self._read_label.setObjectName("BubbleReadStatus")
-            self._read_label.setStyleSheet("color: #C6CDD6; font-size: 10px; background: transparent;")
+            self._read_label.setStyleSheet(
+                f"color: {self._text_secondary}; font-size: 10px; background: transparent;"
+            )
             self._read_label.setVisible(bool(message.read_at))
             meta_row.addWidget(self._read_label)
 
-        meta_label = QLabel(self._format_time(message.timestamp))
-        meta_label.setObjectName("BubbleMetaMine" if is_mine else "BubbleMeta")
-        meta_row.addWidget(meta_label)
+        if not show_header:
+            meta_label = QLabel(self._format_time(message.timestamp))
+            meta_label.setObjectName("BubbleMetaMine" if is_mine else "BubbleMeta")
+            meta_label.setStyleSheet(
+                f"color: {self._text_secondary}; font-size: 10px; background: transparent;"
+            )
+            meta_row.addWidget(meta_label)
 
-        if not is_mine:
-            meta_row.addStretch(1)
-
+        # meta_row는 내용이 비어 있어도(둘 다 조건 미충족) 항상 bubble_layout의
+        # 마지막 항목으로 추가한다: update_text/mark_completed/mark_cancelled가
+        # "bubble_layout.count() - 1" 위치(=meta_row 바로 앞)에 새 행을 끼워 넣는
+        # 방식으로 동작하므로, meta_row가 항상 마지막에 있어야 그 위치 가정이
+        # 상대방 메시지(is_mine=False)에서도 깨지지 않는다.
+        meta_row.addStretch(1)
         bubble_layout.addLayout(meta_row)
 
-        bubble_frame.setMaximumWidth(420)
+        bubble_frame.setMaximumWidth(720)
         bubble_frame.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Minimum)
 
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        if is_mine:
-            row.addStretch(1)
-            row.addWidget(bubble_frame)
-        else:
-            row.addWidget(bubble_frame)
-            row.addStretch(1)
-        column.addLayout(row)
-
-        outer.addLayout(column)
+        content_row.addWidget(bubble_frame)
+        content_row.addStretch(1)
+        outer.addLayout(content_row)
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -233,7 +270,7 @@ class MessageBubble(QWidget):
         return time.strftime("%H:%M", time.localtime(ts))
 
     def _build_text_content(self, layout: QVBoxLayout) -> None:
-        text_color = self._mine_text if self._is_mine else self._other_text
+        text_color = self._text_color
         if self._message.deleted:
             text_label = QLabel("삭제된 메시지입니다")
             text_label.setStyleSheet(
@@ -309,16 +346,16 @@ class MessageBubble(QWidget):
             name_row.addWidget(icon_label)
         name_label = QLabel(filename)
         name_label.setObjectName("FileNameLabel")
-        file_name_color = self._mine_text if self._is_mine else self._other_text
-        name_label.setStyleSheet(f"color: {file_name_color};")
+        name_label.setStyleSheet(f"color: {self._text_color};")
         name_label.setWordWrap(True)
         name_row.addWidget(name_label, 1)
         layout.addLayout(name_row)
 
         meta_label = QLabel(_human_size(size))
         meta_label.setObjectName("FileMetaLabel")
-        if self._is_mine:
-            meta_label.setStyleSheet("color: #DCE5FA; font-size: 11px; background: transparent;")
+        meta_label.setStyleSheet(
+            f"color: {self._text_secondary}; font-size: 11px; background: transparent;"
+        )
         layout.addWidget(meta_label)
 
         if status in (FileStatus.SENDING, FileStatus.RECEIVING):
@@ -464,7 +501,7 @@ class MessageBubble(QWidget):
         """이미 렌더링된 텍스트 버블을 즉시 "삭제된 메시지입니다"로 바꾼다(재생성 없이)."""
         self._message.deleted = True
         if self._text_label is not None:
-            text_color = self._mine_text if self._is_mine else self._other_text
+            text_color = self._text_color
             self._text_label.setText("삭제된 메시지입니다")
             self._text_label.setStyleSheet(
                 f"color: {text_color}; background: transparent; font-style: italic;"
@@ -481,7 +518,7 @@ class MessageBubble(QWidget):
         if self._text_label is not None:
             self._text_label.setText(new_text)
         if self._edited_label is None and self._bubble_layout is not None:
-            text_color = self._mine_text if self._is_mine else self._other_text
+            text_color = self._text_color
             edited_label = QLabel("(수정됨)")
             edited_label.setStyleSheet(
                 f"color: {text_color}; background: transparent; font-size: 10px;"

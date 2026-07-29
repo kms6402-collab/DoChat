@@ -15,9 +15,9 @@ class BubbleTheme:
     other_bg: str
     other_text: str
     # --- 앱 전체 팔레트 (신규) ---
-    accent: str = "#3B6FE0"           # 포인트 컬러 (버튼/선택 강조)
-    accent_hover: str = "#2F5BC4"
-    accent_pressed: str = "#274CA6"
+    accent: str = "#5B5FC7"           # 포인트 컬러 (버튼/선택 강조)
+    accent_hover: str = "#4F52B2"
+    accent_pressed: str = "#3940A2"
     app_bg: str = "#FFFFFF"           # 메인 배경
     sidebar_bg: str = "#F5F6F8"       # 사이드바/헤더 배경
     border: str = "#E4E6EA"           # 구분선/보더
@@ -28,45 +28,45 @@ class BubbleTheme:
 
 
 THEMES: dict[str, BubbleTheme] = {
-    "kakao": BubbleTheme(
-        "카카오톡 스타일(기본)",
-        mine_bg="#FEE500", mine_text="#3C1E1E",
-        other_bg="#FFFFFF", other_text="#191919",
-        accent="#3B1E1E", accent_hover="#5A3434", accent_pressed="#2A1414",
-        app_bg="#B2C7D9", sidebar_bg="#FFFFFF", border="#E5E5E5",
-        text_primary="#191919", text_secondary="#888888",
-        selection_bg="#FFF3B8", hover_bg="#F5F5F5",
+    "signal": BubbleTheme(
+        "시그널(기본)",
+        mine_bg="#5B5FC7", mine_text="#FFFFFF",
+        other_bg="#FFFFFF", other_text="#1B1D22",
+        accent="#5B5FC7", accent_hover="#4F52B2", accent_pressed="#3940A2",
+        app_bg="#F6F7FA", sidebar_bg="#FFFFFF", border="#E3E5EA",
+        text_primary="#1B1D22", text_secondary="#7A7F8A",
+        selection_bg="#ECEBFA", hover_bg="#F0F1F4",
     ),
-    "blue": BubbleTheme(
-        "블루", "#3B6FE0", "#FFFFFF", "#F0F1F4", "#2C2F36",
-        accent="#3B6FE0", accent_hover="#2F5BC4", accent_pressed="#274CA6",
-        app_bg="#FFFFFF", sidebar_bg="#F5F6F8", border="#E4E6EA",
-        text_primary="#2C2F36", text_secondary="#8A8F98",
-        selection_bg="#E3EAFB", hover_bg="#F0F1F4",
+    "mint": BubbleTheme(
+        "민트", "#16A34A", "#FFFFFF", "#FFFFFF", "#1B1D22",
+        accent="#16A34A", accent_hover="#128A3E", accent_pressed="#0F7233",
+        app_bg="#F6F7FA", sidebar_bg="#FFFFFF", border="#E3E5EA",
+        text_primary="#1B1D22", text_secondary="#7A7F8A",
+        selection_bg="#E3F6EA", hover_bg="#EFF7F1",
     ),
-    "green": BubbleTheme(
-        "그린", "#2E9E6B", "#FFFFFF", "#EFF3F1", "#2C2F36",
-        accent="#2E9E6B", accent_hover="#278A5D", accent_pressed="#1F6F4A",
-        app_bg="#FFFFFF", sidebar_bg="#F5F6F8", border="#E4E6EA",
-        text_primary="#2C2F36", text_secondary="#8A8F98",
-        selection_bg="#DFF3E9", hover_bg="#EEF7F2",
+    "coral": BubbleTheme(
+        "코랄", "#DD6B4C", "#FFFFFF", "#FFFFFF", "#1B1D22",
+        accent="#DD6B4C", accent_hover="#C85A3D", accent_pressed="#B14B30",
+        app_bg="#F6F7FA", sidebar_bg="#FFFFFF", border="#E3E5EA",
+        text_primary="#1B1D22", text_secondary="#7A7F8A",
+        selection_bg="#FBEAE5", hover_bg="#FBF2EF",
     ),
-    "purple": BubbleTheme(
-        "퍼플", "#7C5CD6", "#FFFFFF", "#F1EFF6", "#2C2F36",
+    "violet": BubbleTheme(
+        "바이올렛", "#7C5CD6", "#FFFFFF", "#FFFFFF", "#1B1D22",
         accent="#7C5CD6", accent_hover="#6B4CC4", accent_pressed="#5A3FB0",
-        app_bg="#FFFFFF", sidebar_bg="#F5F6F8", border="#E4E6EA",
-        text_primary="#2C2F36", text_secondary="#8A8F98",
+        app_bg="#F6F7FA", sidebar_bg="#FFFFFF", border="#E3E5EA",
+        text_primary="#1B1D22", text_secondary="#7A7F8A",
         selection_bg="#EDE8FA", hover_bg="#F3F0FA",
     ),
     "dark": BubbleTheme(
-        "다크", "#4C8DFF", "#FFFFFF", "#3A3D45", "#EDEEF2",
-        accent="#4C8DFF", accent_hover="#3D7AE0", accent_pressed="#2F63C2",
-        app_bg="#1E1F24", sidebar_bg="#17181C", border="#2E3038",
-        text_primary="#EDEEF2", text_secondary="#9A9EA8",
-        selection_bg="#26314A", hover_bg="#24262C",
+        "다크", "#6D71F5", "#FFFFFF", "#20232C", "#F1F2F5",
+        accent="#6D71F5", accent_hover="#5B5FEF", accent_pressed="#4A4EDB",
+        app_bg="#14161C", sidebar_bg="#1B1E26", border="#262A33",
+        text_primary="#F1F2F5", text_secondary="#9096A3",
+        selection_bg="#262A45", hover_bg="#1F222B",
     ),
 }
-DEFAULT_THEME_KEY = "kakao"
+DEFAULT_THEME_KEY = "signal"
 
 
 def get_theme_colors(storage) -> tuple[str, str, str, str]:
@@ -108,7 +108,7 @@ def get_app_theme(storage) -> BubbleTheme:
 
 
 DEFAULT_FONT_FAMILY = (
-    '"Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", "Helvetica Neue", Arial, sans-serif'
+    '"Pretendard", "Malgun Gothic", "Segoe UI", "Apple SD Gothic Neo", "Helvetica Neue", Arial, sans-serif'
 )
 DEFAULT_FONT_SIZE = "13"
 

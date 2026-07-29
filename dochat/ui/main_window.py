@@ -1,6 +1,7 @@
-"""DoChat 메인 윈도우: 좌측 대화 목록 + 우측 채팅 영역."""
+"""DoChat 메인 윈도우: 좌측 아이콘 레일 + 대화 목록 + 우측 채팅 영역."""
 from __future__ import annotations
 
+import json
 import re
 import sys
 import time
@@ -8,12 +9,13 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -36,6 +38,7 @@ from dochat.ui.compose_bar import ComposeBar
 from dochat.ui.conversation_list import ConversationList
 from dochat.ui.discover_dialog import DiscoverDialog
 from dochat.ui.file_room import FileRoomDialog
+from dochat.ui.icon_rail import IconRail
 from dochat.ui.manage_group_dialog import ManageGroupDialog
 from dochat.ui.new_group_dialog import NewGroupDialog
 from dochat.ui.settings_dialog import SettingsDialog
@@ -162,7 +165,15 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ---------------- 좌측 사이드바 ----------------
+        # ---------------- 최좌측 아이콘 레일 ----------------
+        self.icon_rail = IconRail()
+        self.icon_rail.my_avatar.set_initial(self.chat_engine.my_nickname)
+        self.icon_rail.my_avatar.set_photo_path(
+            str(config.MY_AVATAR_PATH) if config.MY_AVATAR_PATH.exists() else None
+        )
+        root.addWidget(self.icon_rail)
+
+        # ---------------- 사이드바(대화 목록 패널) ----------------
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
         sidebar.setMinimumWidth(260)
@@ -191,22 +202,6 @@ class MainWindow(QMainWindow):
         button_row.addWidget(self._new_group_button)
         header_layout.addLayout(button_row)
 
-        self._discover_button = QPushButton("\U0001F50D 찾기")
-        self._discover_button.setObjectName("SidebarActionButton")
-        header_layout.addWidget(self._discover_button)
-
-        self._file_room_button = QPushButton("\U0001F4C1 파일함 / 전송 히스토리")
-        self._file_room_button.setObjectName("SidebarActionButton")
-        header_layout.addWidget(self._file_room_button)
-
-        self._settings_button = QPushButton("⚙ 설정")
-        self._settings_button.setObjectName("SidebarActionButton")
-        header_layout.addWidget(self._settings_button)
-
-        self._notify_test_button = QPushButton("\U0001F514 알림 테스트")
-        self._notify_test_button.setObjectName("SidebarActionButton")
-        header_layout.addWidget(self._notify_test_button)
-
         sidebar_layout.addWidget(header)
 
         self.conversation_list = ConversationList()
@@ -228,6 +223,14 @@ class MainWindow(QMainWindow):
         footer_layout.addWidget(self._quit_button)
 
         sidebar_layout.addWidget(footer)
+
+        # 대화 목록 패널을 본문과 뚜렷하게 분리하기 위한 그림자
+        # (QSS는 box-shadow를 지원하지 않아 QGraphicsDropShadowEffect로 얹는다).
+        sidebar_shadow = QGraphicsDropShadowEffect(sidebar)
+        sidebar_shadow.setBlurRadius(32)
+        sidebar_shadow.setColor(QColor(0, 0, 0, 110))
+        sidebar_shadow.setOffset(6, 0)
+        sidebar.setGraphicsEffect(sidebar_shadow)
 
         root.addWidget(sidebar)
 
@@ -256,6 +259,13 @@ class MainWindow(QMainWindow):
         chat_header_layout.addWidget(self._header_subtitle)
         chat_header_outer.addLayout(chat_header_layout, 1)
 
+        self._favorite_button = QPushButton("☆")
+        self._favorite_button.setObjectName("HeaderIconButton")
+        self._favorite_button.setCheckable(True)
+        self._favorite_button.setToolTip("즐겨찾기")
+        self._favorite_button.setFixedWidth(36)
+        chat_header_outer.addWidget(self._favorite_button)
+
         self._export_button = QPushButton("\U0001F4BE 내보내기")
         self._export_button.setObjectName("SidebarActionButton")
         chat_header_outer.addWidget(self._export_button)
@@ -267,6 +277,13 @@ class MainWindow(QMainWindow):
 
         self.compose_bar = ComposeBar()
         chat_layout.addWidget(self.compose_bar)
+
+        # 입력창 카드가 살짝 떠 있는 느낌을 주는 그림자.
+        compose_shadow = QGraphicsDropShadowEffect(self.compose_bar)
+        compose_shadow.setBlurRadius(24)
+        compose_shadow.setColor(QColor(0, 0, 0, 45))
+        compose_shadow.setOffset(0, 2)
+        self.compose_bar.card.setGraphicsEffect(compose_shadow)
 
         root.addWidget(chat_panel, 1)
 
@@ -296,12 +313,13 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         self._new_contact_button.clicked.connect(self._on_new_contact_clicked)
         self._new_group_button.clicked.connect(self._on_new_group_clicked)
-        self._discover_button.clicked.connect(self._on_discover_clicked)
-        self._file_room_button.clicked.connect(self._on_file_room_clicked)
-        self._settings_button.clicked.connect(self._on_settings_clicked)
         self._quit_button.clicked.connect(self._on_quit_button_clicked)
-        self._notify_test_button.clicked.connect(self._on_notify_test_clicked)
         self._export_button.clicked.connect(self._on_export_conversation_clicked)
+        self._favorite_button.clicked.connect(self._on_favorite_button_clicked)
+
+        self.icon_rail.discover_clicked.connect(self._on_discover_clicked)
+        self.icon_rail.file_room_clicked.connect(self._on_file_room_clicked)
+        self.icon_rail.settings_clicked.connect(self._on_settings_clicked)
 
         self.conversation_list.conversation_selected.connect(self._on_conversation_selected)
         self.conversation_list.conversation_selected.connect(self._on_conversation_selected_clear_badge)
@@ -309,6 +327,7 @@ class MainWindow(QMainWindow):
         self.conversation_list.delete_contact_requested.connect(self._on_delete_contact_requested)
         self.conversation_list.delete_group_requested.connect(self._on_delete_group_requested)
         self.conversation_list.manage_group_requested.connect(self._on_manage_group_requested)
+        self.conversation_list.favorite_toggle_requested.connect(self._on_favorite_toggle_requested)
 
         self.compose_bar.text_submitted.connect(self._on_text_submitted)
         self.compose_bar.file_selected.connect(self._on_file_to_send)
@@ -323,6 +342,7 @@ class MainWindow(QMainWindow):
         self.chat_engine.file_completed.connect(self._on_file_completed_for_tray)
         self.chat_engine.file_cancelled.connect(self._on_file_cancelled)
         self.chat_engine.contact_status_changed.connect(self._on_contact_status_changed)
+        self.chat_engine.avatar_updated.connect(self.conversation_list.update_avatar)
         self.chat_engine.group_updated.connect(self._on_group_updated)
         self.chat_engine.messages_read_up_to.connect(self._on_messages_read_up_to)
         self.chat_engine.contact_added.connect(self._on_contact_added_by_peer)
@@ -334,7 +354,7 @@ class MainWindow(QMainWindow):
     def _refresh_lists(self) -> None:
         contacts = self.chat_engine.get_contacts()
         groups = self.chat_engine.get_groups()
-        self.conversation_list.refresh(contacts, groups, self.storage)
+        self.conversation_list.refresh(contacts, groups, self.storage, favorites=self._get_favorites())
 
     def _find_group_name(self, group_id: str) -> str:
         for group in self.chat_engine.get_groups():
@@ -342,11 +362,54 @@ class MainWindow(QMainWindow):
                 return group.name
         return group_id
 
+    # ------------------------------------------------------------------
+    # 즐겨찾기 (대화 목록 상단 고정) - settings 테이블에 JSON으로 저장한다
+    # (스키마 마이그레이션 없이 기존 key-value 저장소를 그대로 재사용).
+    # ------------------------------------------------------------------
+    def _get_favorites(self) -> set[tuple[str, str]]:
+        raw = self.storage.get_setting("favorite_conversations", "[]")
+        try:
+            items = json.loads(raw)
+        except (ValueError, TypeError):
+            items = []
+        return {(item[0], item[1]) for item in items if isinstance(item, list) and len(item) == 2}
+
+    def _set_favorites(self, favorites: set[tuple[str, str]]) -> None:
+        self.storage.set_setting("favorite_conversations", json.dumps([list(item) for item in favorites]))
+
+    def _toggle_favorite(self, conversation_id: str, conversation_type: str) -> None:
+        favorites = self._get_favorites()
+        key = (conversation_id, conversation_type)
+        if key in favorites:
+            favorites.discard(key)
+        else:
+            favorites.add(key)
+        self._set_favorites(favorites)
+        self._refresh_lists()
+        if self._current_conversation_id == conversation_id:
+            self._update_header()
+
+    def _on_favorite_button_clicked(self) -> None:
+        if self._current_conversation_id is None:
+            return
+        self._toggle_favorite(self._current_conversation_id, self._current_conversation_type)
+
+    def _on_favorite_toggle_requested(self, conversation_id: str, conversation_type: str) -> None:
+        self._toggle_favorite(conversation_id, conversation_type)
+
     def _update_header(self) -> None:
         if self._current_conversation_id is None:
             self._header_title.setText("대화를 선택해 주세요")
             self._header_subtitle.setText("")
+            self._favorite_button.setEnabled(False)
+            self._favorite_button.setChecked(False)
+            self._favorite_button.setText("☆")
             return
+
+        self._favorite_button.setEnabled(True)
+        is_favorite = (self._current_conversation_id, self._current_conversation_type) in self._get_favorites()
+        self._favorite_button.setChecked(is_favorite)
+        self._favorite_button.setText("★" if is_favorite else "☆")
 
         if self._current_conversation_type == ConversationType.DIRECT:
             contact = self.chat_engine.get_contact(self._current_conversation_id)
@@ -415,6 +478,10 @@ class MainWindow(QMainWindow):
             self._notify_popup = self.storage.get_setting("notify_popup", "1") == "1"
             self._apply_stylesheet()
             self._update_header()
+            self.icon_rail.my_avatar.set_initial(self.chat_engine.my_nickname)
+            self.icon_rail.my_avatar.set_photo_path(
+                str(config.MY_AVATAR_PATH) if config.MY_AVATAR_PATH.exists() else None
+            )
             if self._current_conversation_id is not None:
                 self.chat_view.set_conversation(self._current_conversation_id, self._current_conversation_type, self.chat_engine.client_id)
 
@@ -424,18 +491,6 @@ class MainWindow(QMainWindow):
             return
         self._force_quit = True
         self.close()
-
-    def _on_notify_test_clicked(self) -> None:
-        """트레이 풍선 알림이 실제로 뜨는지 사용자가 바로 확인할 수 있도록 테스트 알림을 띄운다.
-
-        (테스트 목적이므로 창이 보이는 상태여도 isVisible() 체크 없이 무조건 표시한다.)
-        """
-        self.tray_icon.showMessage(
-            "DoChat",
-            "테스트 알림입니다. 이 메시지가 보이면 알림이 정상 동작하는 것입니다.",
-            QSystemTrayIcon.Information,
-            4000,
-        )
 
     def _on_export_conversation_clicked(self) -> None:
         """현재 열려 있는 대화의 전체 메시지를 텍스트 파일로 내보낸다(백업)."""

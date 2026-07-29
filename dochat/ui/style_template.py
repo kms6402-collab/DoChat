@@ -38,7 +38,33 @@ QMainWindow {{
     background-color: {app_bg};
 }}
 
-/* ---------------- 사이드바 ---------------- */
+/* ---------------- 좌측 아이콘 레일 (항상 짙은 네이비, 테마와 무관하게 고정 -
+   참고 디자인처럼 목록 패널과는 별도의 최상위 내비게이션 컬럼) ---------------- */
+#IconRail {{
+    background-color: #1E293B;
+    border-right: none;
+}}
+
+QPushButton#IconRailButton {{
+    background-color: transparent;
+    color: #94A3C4;
+    border: none;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+}}
+
+QPushButton#IconRailButton:hover {{
+    background-color: rgba(255, 255, 255, 0.08);
+    color: #FFFFFF;
+}}
+
+QPushButton#IconRailButton:checked {{
+    background-color: {accent};
+    color: #FFFFFF;
+}}
+
+/* ---------------- 사이드바(대화 목록 패널) ---------------- */
 #Sidebar {{
     background-color: {sidebar_bg};
     border-right: 1px solid {border};
@@ -52,7 +78,7 @@ QMainWindow {{
 #AppTitle {{
     color: {text_primary};
     font-size: 16px;
-    font-weight: 600;
+    font-weight: 700;
 }}
 
 QPushButton#SidebarActionButton {{
@@ -99,26 +125,49 @@ QPushButton#QuitButton:hover {{
     border: 1px solid #E0433B;
 }}
 
+/* ---------------- 검색창 ---------------- */
+QLineEdit#SearchInput {{
+    background-color: {app_bg};
+    border: 1px solid {border};
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-size: 12px;
+    color: {text_primary};
+}}
+
+QLineEdit#SearchInput:focus {{
+    border: 1px solid {accent};
+}}
+
+#ListSectionLabel {{
+    color: {text_secondary};
+    font-size: 11px;
+    font-weight: 700;
+    background: transparent;
+}}
+
 /* ---------------- 대화 목록 ---------------- */
 QListWidget#ConversationList {{
     background-color: {sidebar_bg};
     border: none;
-    padding: 4px;
+    padding: 6px;
 }}
 
 QListWidget#ConversationList::item {{
     background-color: transparent;
     border-radius: 8px;
+    border-left: 3px solid transparent;
     padding: 0px;
-    margin: 2px 4px;
+    margin: 3px 6px;
 }}
 
 QListWidget#ConversationList::item:selected {{
     background-color: {selection_bg};
+    border-left: 3px solid {accent};
 }}
 
 QListWidget#ConversationList::item:hover:!selected {{
-    background-color: #ECEDF1;
+    background-color: {hover_bg};
 }}
 
 /* ---------------- 채팅 영역 헤더 ---------------- */
@@ -136,6 +185,24 @@ QListWidget#ConversationList::item:hover:!selected {{
 #ChatHeaderSubtitle {{
     font-size: 12px;
     color: {text_secondary};
+}}
+
+QPushButton#HeaderIconButton {{
+    background-color: transparent;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    color: {text_secondary};
+    padding: 6px 10px;
+}}
+
+QPushButton#HeaderIconButton:hover {{
+    background-color: {hover_bg};
+    color: {accent};
+}}
+
+QPushButton#HeaderIconButton:checked {{
+    color: #F5B301;
 }}
 
 /* ---------------- 채팅 영역 ---------------- */
@@ -157,13 +224,12 @@ QScrollArea#ChatScrollArea {{
    아래 셀렉터들은 폴백/참고용이며 대응하는 앱 테마 색으로 치환해 둔다) */
 #BubbleFrameMine {{
     background-color: {accent};
-    border-radius: 16px;
+    border-radius: 6px;
 }}
 
 #BubbleFrameOther {{
-    background-color: {hover_bg};
     border: 1px solid {border};
-    border-radius: 16px;
+    border-radius: 6px;
 }}
 
 #BubbleTextMine {{
@@ -197,13 +263,13 @@ QScrollArea#ChatScrollArea {{
 
 #FileCard {{
     background-color: rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
+    border-radius: 6px;
 }}
 
 #FileCardOther {{
     background-color: {app_bg};
     border: 1px solid {border};
-    border-radius: 8px;
+    border-radius: 6px;
 }}
 
 #FileNameLabel {{
@@ -217,31 +283,34 @@ QScrollArea#ChatScrollArea {{
     background: transparent;
 }}
 
-/* ---------------- 입력창 영역 ---------------- */
+/* ---------------- 입력창 영역 (그림자로 살짝 떠 있는 플로팅 바 -
+   실제 box-shadow는 QSS로 안 되므로 main_window.py에서
+   QGraphicsDropShadowEffect로 얹는다) ---------------- */
 #ComposeBar {{
     background-color: {app_bg};
-    border-top: 1px solid {border};
+    border-top: none;
+}}
+
+#ComposeBarCard {{
+    background-color: {sidebar_bg};
+    border: 1px solid {border};
+    border-radius: 24px;
 }}
 
 QLineEdit#ComposeInput {{
-    background-color: {sidebar_bg};
-    border: 1px solid {border};
-    border-radius: 18px;
-    padding: 9px 16px;
-    font-size: 13px;
+    background-color: transparent;
+    border: none;
+    border-radius: 24px;
+    padding: 12px 6px;
+    font-size: 14px;
     color: {text_primary};
-}}
-
-QLineEdit#ComposeInput:focus {{
-    border: 1px solid {accent};
-    background-color: {app_bg};
 }}
 
 QPushButton#AttachButton {{
     background-color: transparent;
     border: none;
     border-radius: 16px;
-    font-size: 16px;
+    font-size: 17px;
     color: {text_secondary};
     padding: 6px;
 }}
@@ -255,9 +324,9 @@ QPushButton#SendButton {{
     background-color: {accent};
     color: #FFFFFF;
     border: none;
-    border-radius: 18px;
-    padding: 8px 20px;
-    font-weight: 600;
+    border-radius: 20px;
+    padding: 10px 22px;
+    font-weight: 700;
 }}
 
 QPushButton#SendButton:hover {{
@@ -277,7 +346,7 @@ QPushButton#SendButton:disabled {{
 QPushButton {{
     background-color: {app_bg};
     border: 1px solid {border};
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 6px 14px;
     color: {text_primary};
 }}
@@ -308,7 +377,7 @@ QPushButton#PrimaryButton:pressed {{
 QLineEdit, QTextEdit, QPlainTextEdit {{
     background-color: {app_bg};
     border: 1px solid {border};
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 6px 10px;
     color: {text_primary};
     selection-background-color: {accent};
@@ -322,7 +391,7 @@ QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {{
 QListWidget {{
     background-color: {app_bg};
     border: 1px solid {border};
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 4px;
 }}
 
@@ -416,7 +485,7 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
 QMenu {{
     background-color: {app_bg};
     border: 1px solid {border};
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 4px;
 }}
 

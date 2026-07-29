@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 
 APP_NAME = "DoChat"
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.1.0"
 
 try:
     # 패키징 스크립트/CI가 빌드 직전에 생성하는 파일. 소스에서 바로 실행하는
@@ -30,8 +30,20 @@ APP_DIR = Path.home() / ".dochat"
 DB_PATH = APP_DIR / "dochat.db"
 RECEIVED_FILES_DIR = APP_DIR / "received"
 
+# 프로필 사진: 내 사진은 고정 경로(존재 여부로 설정 여부를 판단), 상대방
+# 사진은 contact_id별로 캐시한다. DB 마이그레이션 없이 파일 존재만으로
+# 판단할 수 있도록 일부러 결정론적인 경로를 쓴다.
+AVATAR_DIR = APP_DIR / "avatars"
+MY_AVATAR_PATH = APP_DIR / "avatar.jpg"
+AVATAR_MAX_DIMENSION = 128  # px, 정사각형으로 크롭 후 이 크기로 축소
+# JPEG 압축 후 이 크기 이하로 강제한다. base64+JSON+Fernet 오버헤드(약 1.9배,
+# FILE_CHUNK_SIZE 관련 주석 참고)를 감안해도 단일 UDP 데이터그램 안전 마진
+# (~9KB) 안에 들어오도록 보수적으로 잡은 값이다.
+AVATAR_MAX_BYTES = 3072
+
 APP_DIR.mkdir(parents=True, exist_ok=True)
 RECEIVED_FILES_DIR.mkdir(parents=True, exist_ok=True)
+AVATAR_DIR.mkdir(parents=True, exist_ok=True)
 
 # 이 인스턴스가 UDP를 수신 대기하는 기본 포트
 DEFAULT_LISTEN_PORT = 47474

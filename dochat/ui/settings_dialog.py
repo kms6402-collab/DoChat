@@ -5,10 +5,11 @@
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont
+from PySide6.QtCore import QUrl, Qt
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QImage
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -34,8 +35,33 @@ from dochat import autostart, config, update_checker
 from dochat.models.storage import Storage
 from dochat.network.chat_engine import ChatEngine
 from dochat.ui import themes
+from dochat.ui.avatar_widget import AvatarWidget
 
-_DEFAULT_FONT_NAME = "Apple SD Gothic Neo"
+_DEFAULT_FONT_NAME = "Malgun Gothic"
+
+
+def _process_avatar_image(source_path: str, dest_path: Path) -> bool:
+    """이미지를 정사각형으로 중앙 크롭하고 축소한 뒤, AVATAR_MAX_BYTES 이하가 될
+    때까지 JPEG 품질을 낮춰가며 dest_path에 저장한다. 성공하면 True."""
+    image = QImage(source_path)
+    if image.isNull():
+        return False
+
+    side = min(image.width(), image.height())
+    x = (image.width() - side) // 2
+    y = (image.height() - side) // 2
+    cropped = image.copy(x, y, side, side)
+    scaled = cropped.scaled(
+        config.AVATAR_MAX_DIMENSION,
+        config.AVATAR_MAX_DIMENSION,
+        Qt.IgnoreAspectRatio,
+        Qt.SmoothTransformation,
+    )
+
+    for quality in (85, 70, 55, 40, 25):
+        if scaled.save(str(dest_path), "JPEG", quality) and dest_path.stat().st_size <= config.AVATAR_MAX_BYTES:
+            return True
+    return dest_path.exists()
 
 
 class SettingsDialog(QDialog):
@@ -68,7 +94,53 @@ class SettingsDialog(QDialog):
         self._nickname_edit.setPlaceholderText("예: 김철수")
         self._nickname_edit.setMaxLength(40)
         self._nickname_edit.setMinimumWidth(360)
-        form.addRow("내 닉네임", self._nickname_edit)
+        nickname_row = QHBoxLayout()
+        nickname_reset_button = QPushButton("초기화")
+        nickname_reset_button.setToolTip("닉네임과 프로필 사진을 기본값으로 되돌립니다 (저장을 눌러야 적용됩니다).")
+        nickname_reset_button.clicked.connect(self._on_reset_profile)
+        nickname_row.addWidget(self._nickname_edit, 1)
+        nickname_row.addWidget(nickname_reset_button)
+        form.addRow("내 닉네임", nickname_row)
+
+        nickname_hint = QLabel(
+            "닉네임은 상대방에게 그대로 보입니다. 개인정보(실명/사내 계정 등)가 "
+            "포함되지 않도록 주의해 주세요."
+        )
+        nickname_hint.setObjectName("DialogHint")
+        nickname_hint.setWordWrap(True)
+        form.addRow("", nickname_hint)
+
+        # --- 내 프로필 사진 ---------------------------------------------
+        # "사진 변경/제거"는 다른 설정들과 마찬가지로 저장을 눌러야 실제
+        # 반영된다(취소하면 원래 사진 그대로). _avatar_action으로 이번 세션에서
+        # 무엇을 할지만 기억해두고, 실제 파일 반영/네트워크 전송은 _on_accept에서 한다.
+        self._avatar_action: str = "keep"  # "keep" | "set" | "remove"
+        self._avatar_staged_path: str | None = None
+
+        avatar_row = QHBoxLayout()
+        avatar_bg = themes.get_app_theme(storage).accent
+        self._avatar_preview = AvatarWidget(
+            56, initial=chat_engine.my_nickname, bg_color=avatar_bg, photo_path=None
+        )
+        avatar_change_button = QPushButton("사진 변경")
+        avatar_change_button.clicked.connect(self._on_pick_avatar)
+        avatar_remove_button = QPushButton("제거")
+        avatar_remove_button.clicked.connect(self._on_remove_avatar)
+        avatar_row.addWidget(self._avatar_preview)
+        avatar_row.addWidget(avatar_change_button)
+        avatar_row.addWidget(avatar_remove_button)
+        avatar_row.addStretch(1)
+        form.addRow("내 프로필 사진", avatar_row)
+
+        avatar_hint = QLabel(
+            "설정한 사진은 대화 상대에게도 전송되어 상대방 화면에도 표시됩니다."
+        )
+        avatar_hint.setObjectName("DialogHint")
+        avatar_hint.setWordWrap(True)
+        form.addRow("", avatar_hint)
+
+        self._refresh_avatar_preview()
+        self._nickname_edit.textChanged.connect(lambda text: self._avatar_preview.set_initial(text or "?"))
 
         # --- 내 연결 정보 ----------------------------------------------
         ip, port = chat_engine.my_local_address
@@ -317,6 +389,45 @@ class SettingsDialog(QDialog):
             self._other_color = color.name()
             self._update_color_buttons()
 
+    def _on_reset_profile(self) -> None:
+        """닉네임/프로필 사진을 기본값으로 되돌린다(저장을 눌러야 실제 반영)."""
+        self._nickname_edit.setText("새 사용자")
+        self._avatar_action = "remove"
+        self._avatar_staged_path = None
+        self._refresh_avatar_preview()
+
+    def _on_pick_avatar(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "프로필 사진 선택", "", "이미지 파일 (*.png *.jpg *.jpeg *.bmp *.webp)"
+        )
+        if not path:
+            return
+
+        staged_path = config.APP_DIR / "avatar_staged.jpg"
+        if not _process_avatar_image(path, staged_path):
+            QMessageBox.warning(self, "사진 불러오기 실패", "선택한 이미지를 불러올 수 없습니다.")
+            return
+
+        self._avatar_action = "set"
+        self._avatar_staged_path = str(staged_path)
+        self._refresh_avatar_preview()
+
+    def _on_remove_avatar(self) -> None:
+        self._avatar_action = "remove"
+        self._avatar_staged_path = None
+        self._refresh_avatar_preview()
+
+    def _refresh_avatar_preview(self) -> None:
+        """현재 스테이징 상태(변경/제거/유지)에 맞는 사진을 미리보기에 반영한다."""
+        if self._avatar_action == "set":
+            photo_path = self._avatar_staged_path
+        elif self._avatar_action == "remove":
+            photo_path = None
+        else:
+            photo_path = str(config.MY_AVATAR_PATH) if config.MY_AVATAR_PATH.exists() else None
+        self._avatar_preview.set_initial(self._nickname_edit.text() or "?")
+        self._avatar_preview.set_photo_path(photo_path)
+
     def _on_reset_colors(self) -> None:
         self._mine_color = ""
         self._other_color = ""
@@ -485,5 +596,14 @@ class SettingsDialog(QDialog):
 
         self._storage.set_setting("app_font_family", self._font_combo.currentFont().family())
         self._storage.set_setting("app_font_size", str(self._font_size_spin.value()))
+
+        if self._avatar_action == "set" and self._avatar_staged_path:
+            shutil.copyfile(self._avatar_staged_path, config.MY_AVATAR_PATH)
+            self._chat_engine.broadcast_my_avatar()
+        elif self._avatar_action == "remove":
+            config.MY_AVATAR_PATH.unlink(missing_ok=True)
+            # 상대방에게 이미 전달된 사진 캐시까지 지울 방법은 없지만(전송
+            # 프로토콜이 "삭제" 메시지를 지원하지 않음), 적어도 내 쪽 파일은
+            # 지워 다음 번 사진 등록 전까지 더 이상 전송되지 않게 한다.
 
         self.accept()
