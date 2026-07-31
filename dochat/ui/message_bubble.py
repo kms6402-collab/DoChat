@@ -38,8 +38,6 @@ MAX_THUMB = 200
 # 팀즈 스타일 헤더(아바타+이름+시각) 관련 상수.
 HEADER_AVATAR_SIZE = 36
 HEADER_ROW_SPACING = 8
-# show_header=False일 때 내용물을 아바타 컬럼 아래로 정렬시키는 들여쓰기 폭.
-CONTENT_INDENT = HEADER_AVATAR_SIZE + HEADER_ROW_SPACING
 
 
 def _human_size(size: int) -> str:
@@ -207,10 +205,6 @@ class MessageBubble(QWidget):
         content_row = QHBoxLayout()
         content_row.setContentsMargins(0, 0, 0, 0)
         content_row.setSpacing(0)
-        if not show_header:
-            spacer = QWidget()
-            spacer.setFixedWidth(CONTENT_INDENT)
-            content_row.addWidget(spacer)
 
         bubble_frame = _ClickableFrame(on_double_click=self._open_file)
         # 레퍼런스 디자인: 내 메시지/상대 메시지 모두 카드 배경/테두리 없이 완전히

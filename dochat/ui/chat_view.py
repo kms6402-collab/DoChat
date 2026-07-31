@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QLabel,
     QScrollArea,
@@ -69,6 +69,27 @@ class ChatView(QWidget):
         self._viewport_layout.insertWidget(0, self._empty_label)
 
         self._scroll_area.setWidget(self._viewport)
+
+        # 실제로 드롭을 받는 위젯은 화면에 보이는 QScrollArea 내부 viewport()이지
+        # ChatView 자신이 아니다(스크롤 영역이 ChatView 전체를 덮고 있으므로).
+        # ChatView의 dragEnterEvent/dropEvent만 구현해 두면 이 안쪽 viewport가
+        # 먼저 이벤트를 받아 파일을 끌어다 놓아도 반응이 없었다 - 이벤트 필터로
+        # 안쪽 viewport의 드래그&드롭 이벤트를 그대로 ChatView 처리 로직에 넘긴다.
+        self._scroll_area.viewport().setAcceptDrops(True)
+        self._scroll_area.viewport().installEventFilter(self)
+
+    def eventFilter(self, watched, event):  # noqa: N802 (Qt 오버라이드 메서드명)
+        if watched is self._scroll_area.viewport():
+            if event.type() == QEvent.DragEnter:
+                self.dragEnterEvent(event)
+                return event.isAccepted()
+            if event.type() == QEvent.DragMove:
+                self.dragMoveEvent(event)
+                return event.isAccepted()
+            if event.type() == QEvent.Drop:
+                self.dropEvent(event)
+                return True
+        return super().eventFilter(watched, event)
 
     # ------------------------------------------------------------------
     def _clear_bubbles(self) -> None:
@@ -165,6 +186,11 @@ class ChatView(QWidget):
             bar = self._scroll_area.verticalScrollBar()
             bar.setValue(bar.maximum())
 
+        # 새 버블이 추가된 직후에는 스크롤 영역의 range(maximum)가 아직 레이아웃
+        # 갱신 전이라 한 번만 시도하면 끝까지 못 내려가는 경우가 있었다. 즉시
+        # 한 번 시도하고, 레이아웃이 마무리된 다음 프레임에서 다시 한 번
+        # 시도해 항상 맨 아래로 내려가도록 한다.
+        _do_scroll()
         QTimer.singleShot(0, _do_scroll)
 
     # ------------------------------------------------------------------
